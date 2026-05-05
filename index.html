@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BxCM Interactive Soccer</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, sans-serif; }
+        canvas { display: block; }
+
+        /* UI Overlays */
+        #ui-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .museum-logo {
+            font-size: 1.2rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            opacity: 0.8;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+        }
+
+        #camera-settings {
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.3);
+            pointer-events: auto;
+            max-width: 300px;
+        }
+
+        select {
+            padding: 8px;
+            font-size: 1rem;
+            border-radius: 4px;
+            margin-top: 5px;
+            width: 100%;
+            background: #222;
+            color: white;
+            border: 1px solid #555;
+        }
+
+        #video-container {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 240px;
+            height: 180px;
+            border: 2px solid rgba(255,255,255,0.5);
+            border-radius: 8px;
+            overflow: hidden;
+            transform: scaleX(-1); /* Mirror view */
+            opacity: 0.8;
+            z-index: 10;
+            display: none; 
+        }
+
+        video { width: 100%; height: 100%; object-fit: cover; }
+
+        #instructions {
+            position: absolute;
+            bottom: 30px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-size: 1.8rem;
+            letter-spacing: 1px;
+            text-shadow: 0px 4px 10px rgba(0,0,0,0.8);
+            pointer-events: none;
+            z-index: 5;
+            animation: pulse 3s infinite;
+        }
+
+        /* Game Specific UI */
+        #score-board {
+            position: absolute;
+            top: 20px;
+            right: 40px;
+            color: white;
+            font-size: 2.5rem;
+            font-weight: bold;
+            text-shadow: 0 4px 15px rgba(255, 255, 255, 0.5);
+            z-index: 5;
+        }
+
+        #goal-alert {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 8rem;
+            font-weight: 900;
+            color: #b4ff2a;
+            text-shadow: 0 0 30px #b4ff2a, 0 0 10px #fff;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 20;
+            transition: opacity 0.2s;
+            text-transform: uppercase;
+            font-style: italic;
+        }
+
+        .show-goal {
+            animation: goalPop 2s forwards;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.3; }
+            50% { opacity: 0.8; }
+            100% { opacity: 0.3; }
+        }
+
+        @keyframes goalPop {
+            0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+            20% { opacity: 1; transform: translate(-50%, -50%) scale(1.2); }
+            80% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+            100% { opacity: 0; transform: translate(-50%, -50%) scale(1.5); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="score-board">GOALS: <span id="score-value">0</span></div>
+    <div id="goal-alert">GOAL!</div>
+
+    <div id="ui-overlay">
+        <div class="museum-logo">BxCM | FIFA World Cup</div>
+        <div id="camera-settings">
+            <label for="camera-select">🎥 Select Sensor/Camera:</label>
+            <select id="camera-select">
+                <option value="">Loading cameras...</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="instructions">Wave at your ball to kick it! ⚽<br><span style="font-size: 1rem; opacity: 0.7;">Press 'F' for Clean Fullscreen</span></div>
+
+    <div id="video-container">
+        <video id="webcam" autoplay playsinline></video>
+    </div>
+
+    <!-- Hidden canvas for analyzing motion pixels -->
+    <canvas id="motion-canvas" style="display:none;"></canvas>
+
+    <!-- Load Three.js and lil-gui from CDN -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "lil-gui": "https://unpkg.com/lil-gui@0.19.1/dist/lil-gui.esm.min.js"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import GUI from 'lil-gui';
+
+        // --- Game & Admin Configuration State ---
+        const config = {
+            motionThreshold: 30, 
+            kickPower: 0.8,
+            gravity: 0.015,
+            showWebcam: false,
+            goFullscreen: () => {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(err => console.log(err));
+                } else {
+                    document.exitFullscreen();
+                }
+            }
+        };
+
+        let totalScore = 0;
+
+        // --- Setup Admin GUI ---
+        const gui = new GUI({ title: '⚙️ Museum Admin Panel' });
+        const motionFolder = gui.addFolder('Motion Sensor');
+        motionFolder.add(config, 'motionThreshold', 10, 100).name('Sensitivity (Lower=More)');
+        motionFolder.add(config, 'showWebcam').name('Show Webcam View').onChange(v => {
+            if (!document.fullscreenElement) {
+                document.getElementById('video-container').style.display = v ? 'block' : 'none';
+            }
+        });
+        const gameFolder = gui.addFolder('Game Physics');
+        gameFolder.add(config, 'kickPower', 0.3, 1.5).name('Kick Power');
+        gui.add(config, 'goFullscreen').name('Toggle Fullscreen (F)');
+
+        // --- Setup Three.js Scene ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.Fog(0x050508, 10, 40);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 2, 10); // Elevated looking slightly down
+        camera.lookAt(0, 0, -5);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x050508, 1);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(5, 15, 5);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // --- Build the Environment ---
+        // 1. The Field
+        const fieldGeo = new THREE.PlaneGeometry(60, 60);
+        const fieldMat = new THREE.MeshStandardMaterial({ 
+            color: 0x0a3311, 
+            roughness: 0.8,
+            metalness: 0.1
+        });
+        const field = new THREE.Mesh(fieldGeo, fieldMat);
+        field.rotation.x = -Math.PI / 2;
+        field.position.y = -2;
+        field.receiveShadow = true;
+        scene.add(field);
+
+        // Grid lines on field for tech-look
+        const gridHelper = new THREE.GridHelper(60, 30, 0x1f8f30, 0x114a1a);
+        gridHelper.position.y = -1.99;
+        scene.add(gridHelper);
+
+        // 2. The Goal Post (at Z = -15)
+        const goalGroup = new THREE.Group();
+        goalGroup.position.set(0, -2, -15);
+        
+        const postGeo = new THREE.CylinderGeometry(0.2, 0.2, 6);
+        const postMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x333333 });
+        
+        const leftPost = new THREE.Mesh(postGeo, postMat);
+        leftPost.position.set(-6, 3, 0);
+        leftPost.castShadow = true;
+        goalGroup.add(leftPost);
+
+        const rightPost = new THREE.Mesh(postGeo, postMat);
+        rightPost.position.set(6, 3, 0);
+        rightPost.castShadow = true;
+        goalGroup.add(rightPost);
+
+        const crossBarGeo = new THREE.CylinderGeometry(0.2, 0.2, 12.4);
+        const crossBar = new THREE.Mesh(crossBarGeo, postMat);
+        crossBar.rotation.z = Math.PI / 2;
+        crossBar.position.set(0, 6, 0);
+        crossBar.castShadow = true;
+        goalGroup.add(crossBar);
+
+        // Net visualization (simple translucent plane)
+        const netGeo = new THREE.PlaneGeometry(12, 6);
+        const netMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1, wireframe: true });
+        const net = new THREE.Mesh(netGeo, netMat);
+        net.position.set(0, 3, -2);
+        goalGroup.add(net);
+
+        scene.add(goalGroup);
+
+        // --- The Soccer Balls (Multiple Kids) ---
+        const balls = [];
+        const ballColors = [0xff2a5f, 0x2af1ff, 0xb4ff2a]; // Red, Cyan, Green
+        const startPositions = [-4, 0, 4]; // X positions for 3 players
+
+        const ballGeo = new THREE.SphereGeometry(0.7, 32, 32);
+
+        for(let i=0; i<3; i++) {
+            const mat = new THREE.MeshStandardMaterial({ 
+                color: ballColors[i],
+                roughness: 0.3,
+                metalness: 0.2
+            });
+            const mesh = new THREE.Mesh(ballGeo, mat);
+            mesh.castShadow = true;
+            
+            const startPos = new THREE.Vector3(startPositions[i], -1.3, 5); // Z=5 is close to camera
+            mesh.position.copy(startPos);
+            scene.add(mesh);
+
+            balls.push({
+                mesh: mesh,
+                startPos: startPos,
+                vel: new THREE.Vector3(0,0,0),
+                isKicked: false,
+                lifeTime: 0,
+                scored: false,
+                color: ballColors[i]
+            });
+        }
+
+        // --- Particle System for Goals/Kicks ---
+        const particles = [];
+        const particleGeo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+        for(let i=0; i<100; i++){
+            const mat = new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true});
+            const p = new THREE.Mesh(particleGeo, mat);
+            p.visible = false;
+            scene.add(p);
+            particles.push({ mesh: p, vel: new THREE.Vector3(), life: 0 });
+        }
+
+        function createExplosion(position, colorHex) {
+            let count = 0;
+            for(let i=0; i<particles.length; i++) {
+                if(particles[i].life <= 0) {
+                    const p = particles[i];
+                    p.mesh.position.copy(position);
+                    p.mesh.material.color.setHex(colorHex);
+                    p.mesh.visible = true;
+                    p.life = 1.0;
+                    // Random outward velocity
+                    p.vel.set((Math.random()-0.5)*0.5, Math.random()*0.5, (Math.random()-0.5)*0.5);
+                    count++;
+                    if(count > 20) break; // Spawn 20 particles per burst
+                }
+            }
+        }
+
+        // --- Camera & Motion Detection Setup ---
+        const video = document.getElementById('webcam');
+        const cameraSelect = document.getElementById('camera-select');
+        const motionCanvas = document.getElementById('motion-canvas');
+        const mCtx = motionCanvas.getContext('2d', { willReadFrequently: true });
+
+        const GRID_W = 80; 
+        const GRID_H = 60;
+        motionCanvas.width = GRID_W;
+        motionCanvas.height = GRID_H;
+
+        let prevFrame = null;
+        let currentStream = null;
+
+        async function getCameras() {
+            try {
+                await navigator.mediaDevices.getUserMedia({ video: true });
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+                cameraSelect.innerHTML = '';
+                videoDevices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Camera ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+
+                if (videoDevices.length > 0) startStream(videoDevices[0].deviceId);
+            } catch (err) {
+                cameraSelect.innerHTML = '<option>Permission Denied/Error</option>';
+            }
+        }
+
+        async function startStream(deviceId) {
+            if (currentStream) currentStream.getTracks().forEach(track => track.stop());
+            const constraints = { video: deviceId ? { deviceId: { exact: deviceId }, width: 640, height: 480 } : true };
+            try {
+                currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = currentStream;
+            } catch (err) { console.error("Stream error:", err); }
+        }
+
+        cameraSelect.addEventListener('change', (e) => startStream(e.target.value));
+
+        // --- Core Motion Tracking mapped to 3D Balls ---
+        function checkMotion() {
+            if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+
+            mCtx.drawImage(video, 0, 0, GRID_W, GRID_H);
+            const currentFrame = mCtx.getImageData(0, 0, GRID_W, GRID_H).data;
+
+            if (prevFrame) {
+                // Pre-calculate unkicked balls' screen coordinates
+                const activeBalls = balls.filter(b => !b.isKicked);
+                const ballScreenData = activeBalls.map(b => {
+                    const screenPos = b.mesh.position.clone().project(camera);
+                    return { ball: b, screenPos: screenPos };
+                });
+
+                // If no balls to kick, skip heavy scanning
+                if (ballScreenData.length > 0) {
+                    for (let y = 0; y < GRID_H; y+=2) { // Step by 2 for performance
+                        for (let x = 0; x < GRID_W; x+=2) {
+                            const i = (y * GRID_W + x) * 4;
+
+                            const rDiff = Math.abs(currentFrame[i] - prevFrame[i]);
+                            const gDiff = Math.abs(currentFrame[i+1] - prevFrame[i+1]);
+                            const bDiff = Math.abs(currentFrame[i+2] - prevFrame[i+2]);
+
+                            if (rDiff + gDiff + bDiff > config.motionThreshold) {
+                                // Calculate Normalized Device Coordinates of the motion pixel
+                                const normX = (1 - (x / GRID_W)) * 2 - 1; // Mirrored for natural feeling
+                                const normY = -( (y / GRID_H) * 2 - 1 );
+
+                                // Check if motion is near any unkicked ball in screen-space
+                                for (let data of ballScreenData) {
+                                    if(data.ball.isKicked) continue; // Skip if already kicked in this frame loop
+
+                                    const dist = Math.hypot(data.screenPos.x - normX, data.screenPos.y - normY);
+                                    
+                                    // If motion is within the 'hitbox' radius of the ball on screen
+                                    if (dist < 0.25) { 
+                                        data.ball.isKicked = true;
+                                        
+                                        // Calculate a vector from the center of the ball to the motion to push it
+                                        const hitDirX = data.screenPos.x - normX; 
+                                        
+                                        // Apply Physics Impulse
+                                        data.ball.vel.set(
+                                            hitDirX * 1.5 * config.kickPower,  // Curve/Aim left or right
+                                            0.5 * config.kickPower,            // Upward arc
+                                            -1.2 * config.kickPower            // Forward towards goal
+                                        );
+                                        
+                                        createExplosion(data.ball.mesh.position, data.ball.color);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            prevFrame = new Uint8ClampedArray(currentFrame);
+        }
+
+        function triggerGoal() {
+            totalScore++;
+            document.getElementById('score-value').innerText = totalScore;
+            
+            const alertEl = document.getElementById('goal-alert');
+            alertEl.classList.remove('show-goal');
+            void alertEl.offsetWidth; // trigger reflow
+            alertEl.classList.add('show-goal');
+        }
+
+        function resetBall(b) {
+            b.isKicked = false;
+            b.scored = false;
+            b.lifeTime = 0;
+            b.vel.set(0,0,0);
+            b.mesh.position.copy(b.startPos);
+        }
+
+        // --- Physics & Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            checkMotion();
+
+            // Update Balls
+            for(let b of balls) {
+                if(b.isKicked) {
+                    b.lifeTime++;
+                    
+                    // Apply Velocity & Gravity
+                    b.vel.y -= config.gravity;
+                    b.mesh.position.add(b.vel);
+
+                    // Floor Bounce
+                    if(b.mesh.position.y < -1.3 && b.vel.y < 0) {
+                        b.mesh.position.y = -1.3;
+                        b.vel.y *= -0.6; // Bounce dampening
+                        b.vel.x *= 0.95; // Friction
+                        b.vel.z *= 0.95;
+                    }
+
+                    // Goal Detection (Crosses Z line between posts and under crossbar)
+                    if(!b.scored && b.mesh.position.z < -14 && b.mesh.position.z > -16) {
+                        if(b.mesh.position.x > -6 && b.mesh.position.x < 6 && b.mesh.position.y < 6) {
+                            b.scored = true;
+                            triggerGoal();
+                            createExplosion(b.mesh.position, 0xffffff); // Big white explosion for goal
+                        }
+                    }
+
+                    // Reset if too old or out of bounds
+                    if(b.lifeTime > 250 || b.mesh.position.z < -25 || b.mesh.position.z > 15 || Math.abs(b.mesh.position.x) > 30) {
+                        resetBall(b);
+                    }
+                }
+            }
+
+            // Update Particles
+            for(let p of particles) {
+                if(p.life > 0) {
+                    p.life -= 0.02;
+                    p.vel.y -= 0.01; // Gravity on particles
+                    p.mesh.position.add(p.vel);
+                    p.mesh.material.opacity = p.life;
+                    if(p.life <= 0) p.mesh.visible = false;
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // --- Fullscreen and UI Logic ---
+        document.addEventListener('fullscreenchange', () => {
+            const uiOverlay = document.getElementById('ui-overlay');
+            const instructions = document.getElementById('instructions');
+            const videoContainer = document.getElementById('video-container');
+
+            if (document.fullscreenElement) {
+                // Hide administrative/setup UI when in fullscreen
+                uiOverlay.style.display = 'none';
+                instructions.style.display = 'none';
+                videoContainer.style.display = 'none';
+                gui.hide();
+                // We leave the score and goal alert visible for the game!
+            } else {
+                // Show UI when exiting fullscreen
+                uiOverlay.style.display = 'block';
+                instructions.style.display = 'block';
+                if(config.showWebcam) videoContainer.style.display = 'block';
+                gui.show();
+            }
+        });
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 'f') config.goFullscreen();
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        getCameras();
+        animate();
+
+    </script>
+</body>
+</html>
