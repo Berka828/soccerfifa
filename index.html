@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>World Cup Keep-Up</title>
+    <title>World Cup Keep-Up Challenge</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
         canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
@@ -28,8 +28,8 @@
 </head>
 <body>
     <div id="ui">
-        <h1 style="letter-spacing: 2px; font-size: 3em; font-weight: bold; margin-bottom: 10px;">WORLD CUP KEEP-UP</h1>
-        <p style="color: #ddd; font-size: 1.2em; margin-bottom: 40px;">Juggle to build power, then kick a "lob shot" into the net!</p>
+        <h1 style="letter-spacing: 2px; font-size: 3em; font-weight: bold; margin-bottom: 10px;">KEEP-UP CHALLENGE</h1>
+        <p style="color: #ddd; font-size: 1.2em; margin-bottom: 40px;">Use your legs and feet to keep the ball in the air!</p>
         <button onclick="startApp()">START GAME</button>
     </div>
 
@@ -41,21 +41,18 @@
         var canvas = document.getElementById('gameCanvas');
         var ctx = canvas.getContext('2d');
 
-        var soccerBall = null, motionPoints = [], playerSilhouette = [], lastFrame = null, ballTrail = [];
+        var soccerBall = null, motionPoints = [], playerSilhouette = [], lastFrame = null;
         var engineBooted = false, score = 0, highScore = 0;
         
         var backgroundImage = new Image();
         var backgroundLoaded = false;
-        var goalCelebration = { text: '', life: 0 };
 
         var defaultSettings = {
-            gameSpeed: 1.0, kickPower: 18, ballSize: 60, gravity: 0.45,
-            floorLevel: 0.85, soundEnabled: true, cameraAlpha: 0.2, cameraBlur: 3, 
+            gameSpeed: 1.0, kickPower: 16, ballSize: 60, gravity: 0.4, // Tweaked physics
+            floorLevel: 0.9, soundEnabled: true, cameraAlpha: 0.2, cameraBlur: 3, 
             indicatorColor: '#00FFFF', indicatorSize: 40,
         };
-        // Load settings from localStorage or use defaults
         var settings = JSON.parse(localStorage.getItem('soccerGameSettings')) || { ...defaultSettings };
-
 
         var audioCtx;
 
@@ -63,7 +60,6 @@
             document.getElementById('ui').style.display = 'none';
             initAudio();
             startCamera();
-
             backgroundImage.src = 'ChatGPT Image May 16, 2026, 04_06_46 AM.png';
             backgroundImage.onload = () => { backgroundLoaded = true; };
         }
@@ -87,9 +83,9 @@
             var gui = new dat.GUI();
             var gameFolder = gui.addFolder('Game Settings');
             gameFolder.add(settings, 'gameSpeed', 0.5, 2.0).name('Game Speed');
-            gameFolder.add(settings, 'kickPower', 10, 30).name('Kick Power');
+            gameFolder.add(settings, 'kickPower', 10, 25).name('Kick Power');
             gameFolder.add(settings, 'ballSize', 30, 100).name('Ball Size').onFinishChange(() => { if(soccerBall) soccerBall.radius = settings.ballSize; });
-            gameFolder.add(settings, 'floorLevel', 0.5, 1.0).name('Floor Level');
+            gameFolder.add(settings, 'floorLevel', 0.6, 1.0).name('Floor Level');
             gameFolder.add(settings, 'soundEnabled').name('Sound ON/OFF');
             gameFolder.open();
 
@@ -99,24 +95,14 @@
             playerFolder.addColor(settings, 'indicatorColor').name('Form Color');
             playerFolder.add(settings, 'indicatorSize', 10, 80).name('Extremity Size');
             playerFolder.open();
-
-            // --- NEW: Save/Reset functionality ---
+            
             var persistence = {
-                saveSettings: function() {
-                    localStorage.setItem('soccerGameSettings', JSON.stringify(settings));
-                    alert('Your settings have been saved!');
-                },
-                resetToDefaults: function() {
-                    if (confirm('Are you sure you want to reset all settings to their defaults?')) {
-                        localStorage.removeItem('soccerGameSettings');
-                        window.location.reload();
-                    }
-                }
+                saveSettings: function() { localStorage.setItem('soccerGameSettings', JSON.stringify(settings)); alert('Settings Saved!'); },
+                resetToDefaults: function() { if (confirm('Reset all settings?')) { localStorage.removeItem('soccerGameSettings'); window.location.reload(); } }
             };
             var saveFolder = gui.addFolder('Save & Reset');
-            saveFolder.add(persistence, 'saveSettings').name('Save Settings');
+            saveFolder.add(persistence, 'saveSettings').name('Save Current Settings');
             saveFolder.add(persistence, 'resetToDefaults').name('Reset to Defaults');
-            saveFolder.open();
         }
 
         function startExperience() {
@@ -135,106 +121,142 @@
             
             drawMirroredCamera();
             drawPlayerForm(); 
-            drawGoalTarget(); 
             if (soccerBall) updateAndDrawBall();
             drawBroadcastUI(); 
-            drawGoalCelebration(); 
         }
 
-        // --- NEW: Reworked "Lob Shot" Physics ---
+        // --- CORE GAME LOGIC ---
+        
         function updateAndDrawBall() {
             var floorY = canvas.height * settings.floorLevel;
-            var goalRect = { x: canvas.width * 0.4, y: floorY - canvas.height*0.3, width: canvas.width * 0.2, height: canvas.height*0.25 };
-
-            if (soccerBall.state === 'juggling') {
-                soccerBall.vy += settings.gravity * settings.gameSpeed;
-                soccerBall.x += soccerBall.vx * settings.gameSpeed;
-                soccerBall.y += soccerBall.vy * settings.gameSpeed;
-                soccerBall.vx *= 0.985; soccerBall.vy *= 0.985;
-                soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed;
-                
-                if (score >= 3 && Math.random() > 0.5) {
-                    ballTrail.push({x: soccerBall.x + (Math.random()-0.5)*settings.ballSize, y: soccerBall.y + (Math.random()-0.5)*settings.ballSize, life: 30, scale: 1, rot: Math.random()*Math.PI});
-                }
-                if (soccerBall.x - settings.ballSize < 0 || soccerBall.x + settings.ballSize > canvas.width) {
-                    soccerBall.vx *= -0.9; playSound('bounce');
-                }
-                if (soccerBall.y + settings.ballSize > floorY) {
-                    soccerBall.y = floorY - settings.ballSize; soccerBall.vy *= -0.7;
-                    if (score > 0) playSound('whistle'); score = 0; ballTrail = []; 
-                }
-            } 
-            else if (soccerBall.state === 'shooting') {
-                // Apply gravity to the shot for an arc
-                soccerBall.vy += settings.gravity * 0.5 * settings.gameSpeed; 
-                
-                // Move ball based on arcing velocity
-                soccerBall.y += soccerBall.vy * settings.gameSpeed;
-                soccerBall.x += soccerBall.vx * settings.gameSpeed;
-
-                // Move ball "backwards" into the scene
-                soccerBall.z += 0.015 * settings.gameSpeed; 
-                soccerBall.rotation += 0.15; 
-
-                if (Math.random() > 0.3) {
-                    ballTrail.push({x: soccerBall.x, y: soccerBall.y, life: 20, scale: Math.max(0.2, 1.0 - soccerBall.z), rot: Math.random()*Math.PI});
-                }
-                
-                if (soccerBall.z >= 1.0) { // If shot has reached the "back" of the field
-                    if (soccerBall.x > goalRect.x && soccerBall.x < goalRect.x + goalRect.width && soccerBall.y > goalRect.y && soccerBall.y < goalRect.y + goalRect.height) {
-                        triggerGoalCelebration();
-                    } else {
-                        playSound('whistle'); 
-                    }
-                    soccerBall = createSoccerBall(); score = 0; ballTrail = [];
-                    return;
-                }
+            
+            soccerBall.vy += settings.gravity * settings.gameSpeed;
+            soccerBall.x += soccerBall.vx * settings.gameSpeed;
+            soccerBall.y += soccerBall.vy * settings.gameSpeed;
+            soccerBall.vx *= 0.99; // Less aggressive horizontal slowdown
+            soccerBall.vy *= 0.99;
+            soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed;
+            
+            // Wall bounces
+            if (soccerBall.x - settings.ballSize < 0 || soccerBall.x + settings.ballSize > canvas.width) {
+                soccerBall.vx *= -0.8; // Softer wall bounce
+                playSound('bounce');
             }
 
-            if (ballTrail.length > 30) ballTrail.shift();
-            drawBallTrail();
+            // Floor bounce (Game Over)
+            if (soccerBall.y + settings.ballSize > floorY) {
+                soccerBall.y = floorY - settings.ballSize;
+                soccerBall.vy *= -0.6; // Softer floor bounce
+                if (score > 0) playSound('whistle');
+                score = 0; // Reset score
+            }
 
-            var currentScale = Math.max(0.2, 1.0 - soccerBall.z);
-            drawModernSoccerBall(soccerBall.x, soccerBall.y, settings.ballSize * currentScale, soccerBall.rotation);
+            drawModernSoccerBall(soccerBall.x, soccerBall.y, settings.ballSize, soccerBall.rotation);
         }
 
-        // --- NEW: Player form has a "dissolve" effect ---
+        function trackMotion() {
+            var mCanvas = document.createElement('canvas');
+            var mCtx = mC.getContext('2d', { willReadFrequently: true });
+            mC.width = 64; mC.height = 48;
+
+            function scan() {
+                if (!engineBooted) { setTimeout(scan, 100); return; }
+                mCtx.drawImage(video, 0, 0, 64, 48);
+                var cur = mCtx.getImageData(0, 0, 64, 48).data;
+                motionPoints = [];
+                playerSilhouette = [];
+                
+                if (lastFrame) {
+                    let rawMotion = [];
+                    for (let i = 0; i < cur.length; i += 8) {
+                        if (Math.abs(cur[i] - lastFrame[i]) > 40) {
+                            var x = (1.0 - (((i / 4) % 64) / 64)) * canvas.width;
+                            var y = (Math.floor(i / 4 / 64)) / 48 * canvas.height;
+                            rawMotion.push({ x, y });
+                        }
+                    }
+                    playerSilhouette = rawMotion;
+
+                    // --- NEW: Interaction logic for KICK ZONE ONLY ---
+                    if (rawMotion.length > 0) {
+                        let kickZonePoints = [];
+                        let upperBodyPoints = [];
+
+                        rawMotion.forEach(p => {
+                            // Divide points based on screen position
+                            if (p.y > canvas.height * 0.5) { // Lower half of the screen
+                                kickZonePoints.push(p);
+                            } else {
+                                upperBodyPoints.push(p);
+                            }
+                        });
+
+                        // Only find the "lowest" point from the valid kick zone
+                        if (kickZonePoints.length > 0) {
+                            let lowestPt = kickZonePoints[0];
+                            kickZonePoints.forEach(p => {
+                                if (p.y > lowestPt.y) lowestPt = p;
+                            });
+                            motionPoints = [lowestPt]; // We only care about the lowest point now
+
+                            // Interact ONLY with this lowest point
+                            var dx = soccerBall.x - lowestPt.x;
+                            var dy = soccerBall.y - lowestPt.y;
+                            if (Math.sqrt(dx * dx + dy * dy) < soccerBall.radius + 60) { // Larger radius for feet
+                                if (soccerBall.lastKicker !== lowestPt) {
+                                    soccerBall.vy = -settings.kickPower; // Consistent kick height
+                                    soccerBall.vx = -dx * 0.15; // Reduced horizontal influence
+                                    score++;
+                                    if (score > highScore) highScore = score;
+                                    playSound('kick');
+                                    soccerBall.lastKicker = lowestPt;
+                                }
+                            } else {
+                                soccerBall.lastKicker = null;
+                            }
+                        }
+                    }
+                }
+                lastFrame = new Uint8ClampedArray(cur);
+                setTimeout(scan, 50);
+            }
+            scan();
+        }
+
+        // --- DRAWING & HELPER FUNCTIONS ---
+        
+        function drawBroadcastUI() {
+            ctx.save();
+            ctx.fillStyle = 'rgba(0, 20, 50, 0.8)';
+            ctx.beginPath(); ctx.moveTo(20, 20); ctx.lineTo(320, 20); ctx.lineTo(300, 80); ctx.lineTo(20, 80); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.beginPath(); ctx.moveTo(canvas.width - 20, 20); ctx.lineTo(canvas.width - 280, 20); ctx.lineTo(canvas.width - 260, 60); ctx.lineTo(canvas.width - 20, 60); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = 'white'; ctx.font = 'bold 36px Arial, sans-serif'; ctx.textAlign = 'left';
+            ctx.fillText(score, 40, 65);
+            ctx.fillStyle = '#FFD700'; ctx.font = 'bold 20px Arial, sans-serif';
+            ctx.fillText('KICKS', 100, 62);
+            ctx.fillStyle = 'white'; ctx.textAlign = 'right'; ctx.font = '20px Arial, sans-serif';
+            ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width - 40, 48);
+            ctx.restore();
+        }
+
         function drawPlayerForm() {
             ctx.save();
             ctx.fillStyle = settings.indicatorColor;
-            
             playerSilhouette.forEach(p => {
-                // Randomly skip points for a dissolving/energy look
                 if (Math.random() > 0.4) {
                     ctx.globalAlpha = Math.random() * 0.4;
                     ctx.fillRect(p.x - 4, p.y - 4, 8, 8); 
                 }
             });
             ctx.restore();
-
-            // Extremities are still drawn clearly for aiming
+            // Still draw the lowest point clearly
             motionPoints.forEach(p => {
                 var grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, settings.indicatorSize);
-                grad.addColorStop(0, settings.indicatorColor + 'AA'); grad.addColorStop(1, settings.indicatorColor + '00');
+                grad.addColorStop(0, '#FFFFFF'); grad.addColorStop(1, settings.indicatorColor + '00');
                 ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(p.x, p.y, settings.indicatorSize, 0, 2 * Math.PI); ctx.fill();
-                ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, 2 * Math.PI); ctx.fill();
             });
         }
         
-        // --- All other functions (minified for brevity) ---
-        function drawGoalTarget(){if(score>=3&&soccerBall&&soccerBall.state==='juggling'){var f=canvas.height*settings.floorLevel;var g={x:canvas.width*0.35,y:f-canvas.height*0.35,width:canvas.width*0.3,height:canvas.height*0.35};ctx.save();ctx.strokeStyle=`rgba(255,215,0,${0.5+Math.sin(Date.now()/150)*0.3})`;ctx.lineWidth=4;ctx.setLineDash([15,15]);ctx.strokeRect(g.x,g.y,g.width,g.height);ctx.fillStyle='#FFD700';ctx.textAlign='center';ctx.font='bold 24px Arial';ctx.fillText("POWER SHOT READY!",canvas.width/2,g.y-20);ctx.restore();}}
-        function drawBroadcastUI(){ctx.save();ctx.fillStyle='rgba(0,20,50,0.8)';ctx.beginPath();ctx.moveTo(20,20);ctx.lineTo(320,20);ctx.lineTo(300,80);ctx.lineTo(20,80);ctx.closePath();ctx.fill();ctx.fillStyle='rgba(0,0,0,0.7)';ctx.beginPath();ctx.moveTo(canvas.width-20,20);ctx.lineTo(canvas.width-280,20);ctx.lineTo(canvas.width-260,60);ctx.lineTo(canvas.width-20,60);ctx.closePath();ctx.fill();ctx.fillStyle='white';ctx.font='bold 36px Arial,sans-serif';ctx.textAlign='left';ctx.fillText(score,40,65);ctx.fillStyle='#FFD700';ctx.font='bold 20px Arial,sans-serif';ctx.fillText('COMBO',100,62);ctx.fillStyle='white';ctx.textAlign='right';ctx.font='20px Arial,sans-serif';ctx.fillText(`HIGH SCORE: ${highScore}`,canvas.width-40,48);ctx.restore();}
-        function triggerGoalCelebration(){goalCelebration.text='GOAL!';goalCelebration.life=120;playSound('cheer');score+=100;if(score>highScore)highScore=score;}
-        function drawGoalCelebration(){if(goalCelebration.life>0){goalCelebration.life--;ctx.save();let s=1+(120-goalCelebration.life)/120;let a=goalCelebration.life>60?1:goalCelebration.life/60;ctx.textAlign='center';ctx.font=`bold ${100*s}px Arial,sans-serif`;ctx.fillStyle=`rgba(255,215,0,${a})`;ctx.strokeStyle=`rgba(0,0,0,${a})`;ctx.lineWidth=8;ctx.strokeText(goalCelebration.text,canvas.width/2,canvas.height/2);ctx.fillText(goalCelebration.text,canvas.width/2,canvas.height/2);ctx.restore();}}
-        function drawBallTrail(){ctx.save();for(let i=ballTrail.length-1;i>=0;i--){let p=ballTrail[i];p.life--;if(p.life<=0){ballTrail.splice(i,1);}else{let a=p.life/30;let s=(settings.ballSize/6)*p.scale;ctx.translate(p.x,p.y);ctx.rotate(p.rot);ctx.fillStyle=`rgba(255,235,100,${a})`;ctx.beginPath();ctx.moveTo(0,-s);ctx.quadraticCurveTo(s/4,-s/4,s,0);ctx.quadraticCurveTo(s/4,s/4,0,s);ctx.quadraticCurveTo(-s/4,s/4,-s,0);ctx.quadraticCurveTo(-s/4,-s/4,0,-s);ctx.fill();ctx.rotate(-p.rot);ctx.translate(-p.x,-p.y);}}ctx.restore();}
-        function drawModernSoccerBall(x,y,r,rot){ctx.save();ctx.translate(x,y);ctx.rotate(rot);ctx.fillStyle='white';ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#555';ctx.lineWidth=2;ctx.stroke();var c=['#E41E26','#1E90FF','#FFD700'];for(let i=0;i<3;i++){ctx.fillStyle=c[i];ctx.beginPath();ctx.arc(r*0.6,0,r*0.4,-Math.PI*0.6,Math.PI*0.6);ctx.rotate(Math.PI*2/3);ctx.fill();}ctx.restore();}
-        function createSoccerBall(){return{x:canvas.width/2,y:canvas.height/4,vx:(Math.random()-0.5)*10,vy:-5,z:0,radius:settings.ballSize,rotation:0,lastKicker:null,state:'juggling'};}
-        function trackMotion(){var mC=document.createElement('canvas');var mCtx=mC.getContext('2d',{willReadFrequently:true});mC.width=64;mC.height=48;function scan(){if(!engineBooted){setTimeout(scan,100);return;}mCtx.drawImage(video,0,0,64,48);var cur=mCtx.getImageData(0,0,64,48).data;motionPoints=[];playerSilhouette=[];if(lastFrame){let raw=[];for(let i=0;i<cur.length;i+=8){if(Math.abs(cur[i]-lastFrame[i])>40){var x=(1.0-(((i/4)%64)/64))*canvas.width;var y=(Math.floor(i/4/64))/48*canvas.height;raw.push({x,y});}}playerSilhouette=raw;if(raw.length>0){let t=raw[0],b=raw[0],l=raw[0],r=raw[0];raw.forEach(p=>{if(p.y<t.y)t=p;if(p.y>b.y)b=p;if(p.x<l.x)l=p;if(p.x>r.x)r=p;});motionPoints=[t,b,l,r];motionPoints.forEach(pt=>{if(!soccerBall)return;var dx=soccerBall.x-pt.x;var dy=soccerBall.y-pt.y;if(Math.sqrt(dx*dx+dy*dy)<soccerBall.radius+50){if(soccerBall.lastKicker!==pt){if(soccerBall.state==='juggling'){if(score>=3){soccerBall.state='shooting';soccerBall.vy=-settings.kickPower*0.8;soccerBall.vx=(canvas.width/2-soccerBall.x)*0.03;playSound('kick');}else{soccerBall.vy=-settings.kickPower*(1-(dy/200));soccerBall.vx=-dx*0.25;score++;if(score>highScore)highScore=score;playSound('kick');}}soccerBall.lastKicker=pt;}}else{soccerBall.lastKicker=null;}});}}lastFrame=new Uint8ClampedArray(cur);setTimeout(scan,50);}scan();}
-        function initAudio(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();}
-        function playSound(type){if(!audioCtx||!settings.soundEnabled)return;var o=audioCtx.createOscillator();var g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);g.gain.setValueAtTime(0.2,audioCtx.currentTime);if(type==='kick'){o.frequency.setValueAtTime(150,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.2);}else if(type==='whistle'){o.type='sine';o.frequency.setValueAtTime(1200,audioCtx.currentTime);o.frequency.exponentialRampToValueAtTime(800,audioCtx.currentTime+0.3);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.4);}else if(type==='bounce'){o.frequency.setValueAtTime(80,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.2);}else if(type==='cheer'){g.gain.setValueAtTime(0,audioCtx.currentTime);g.gain.linearRampToValueAtTime(0.4,audioCtx.currentTime+0.2);g.gain.linearRampToValueAtTime(0,audioCtx.currentTime+1.5);o=audioCtx.createBufferSource();var buf=audioCtx.createBuffer(1,audioCtx.sampleRate*1.5,audioCtx.sampleRate);var data=buf.getChannelData(0);for(let i=0;i<data.length;i++)data[i]=Math.random()*2-1;o.buffer=buf;o.connect(g);}o.start();o.stop(audioCtx.currentTime+1.5);}
-        function drawMirroredCamera(){ctx.save();ctx.globalAlpha=settings.cameraAlpha;ctx.filter=`blur(${settings.cameraBlur}px) contrast(1.2)`;ctx.scale(-1,1);ctx.translate(-canvas.width,0);if(video.readyState>=3)ctx.drawImage(video,0,0,canvas.width,canvas.height);ctx.restore();}
-        function resizeCanvas(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;}
-        document.addEventListener('keydown',e=>{if(e.key.toLowerCase()==='f'){if(!document.fullscreenElement)document.documentElement.requestFullscreen().then(()=>document.body.classList.add('fullscreen'));else document.exitFullscreen().then(()=>document.body.classList.remove('fullscreen'));}});
-    </script>
-</body>
-</html>
+        function createSoccerBall() { return { x: canvas.width / 2, y: canvas.height / 4, vx: (Math.random() - 0.5) * 5, vy: -5, radius: settings.ballSize, rotation: 0, lastKicker: null }; }
+        function drawModernSoccerBall(x, y, r, rot) { ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.stroke(); var c = ['#E41E26', '#1E90FF', '#FFD700']; for (let i = 0; i < 3; i++) { ctx.fillStyle = c[i]; ctx.beginPath(); ctx.arc(r * 0.6, 0, r * 0.4, -Math.PI * 0.6, Math.PI * 0.6); ctx.rotate(Math.PI * 2 / 3); ctx.
