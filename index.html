@@ -6,16 +6,7 @@
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
         canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
-        
-        /* FIX: Never use display: none on video, browsers will stop rendering it */
-        #webcam { 
-            transform: scaleX(-1); 
-            position: absolute; 
-            top: 0; left: 0; 
-            width: 1px; height: 1px; 
-            opacity: 0; 
-            pointer-events: none; 
-        }
+        #webcam { transform: scaleX(-1); position:absolute; top:0; left:0; width:1px; height:1px; opacity:0; }
         
         #ui {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -30,11 +21,6 @@
         }
         button:hover { background-color: #45a049; transform: scale(1.05); }
         
-        #error-msg {
-            color: #ff4444; font-size: 1.2em; max-width: 600px; margin-top: 20px; display: none;
-            background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border: 1px solid #ff4444;
-        }
-
         .dg.ac { z-index: 50 !important; transition: opacity 0.3s; }
         body.fullscreen .dg.ac { opacity: 0; pointer-events: none; }
     </style>
@@ -43,9 +29,8 @@
 <body>
     <div id="ui">
         <h1 style="letter-spacing: 2px; font-size: 3em; font-weight: bold; margin-bottom: 10px;">WORLD CUP KEEP-UP</h1>
-        <p style="color: #ddd; font-size: 1.2em; margin-bottom: 40px;">Juggle to build power, then kick it FORWARD into the net!</p>
-        <button id="startBtn" onclick="startApp()">START GAME</button>
-        <div id="error-msg"></div>
+        <p style="color: #ddd; font-size: 1.2em; margin-bottom: 40px;">Juggle to build power, then kick a "lob shot" into the net!</p>
+        <button onclick="startApp()">START GAME</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -55,8 +40,6 @@
         var video = document.getElementById('webcam');
         var canvas = document.getElementById('gameCanvas');
         var ctx = canvas.getContext('2d');
-        var errorMsg = document.getElementById('error-msg');
-        var startBtn = document.getElementById('startBtn');
 
         var soccerBall = null, motionPoints = [], playerSilhouette = [], lastFrame = null, ballTrail = [];
         var engineBooted = false, score = 0, highScore = 0;
@@ -65,31 +48,20 @@
         var backgroundLoaded = false;
         var goalCelebration = { text: '', life: 0 };
 
-        var settings = {
+        var defaultSettings = {
             gameSpeed: 1.0, kickPower: 18, ballSize: 60, gravity: 0.45,
-            floorLevel: 0.85, soundEnabled: true, 
-            cameraAlpha: 0.2, cameraBlur: 3, 
+            floorLevel: 0.85, soundEnabled: true, cameraAlpha: 0.2, cameraBlur: 3, 
             indicatorColor: '#00FFFF', indicatorSize: 40,
         };
+        // Load settings from localStorage or use defaults
+        var settings = JSON.parse(localStorage.getItem('soccerGameSettings')) || { ...defaultSettings };
+
 
         var audioCtx;
 
-        function showError(msg) {
-            errorMsg.innerHTML = msg;
-            errorMsg.style.display = 'block';
-            startBtn.innerText = "TRY AGAIN";
-        }
-
         function startApp() {
-            errorMsg.style.display = 'none';
+            document.getElementById('ui').style.display = 'none';
             initAudio();
-            
-            // Check for file:// protocol block immediately
-            if (window.location.protocol === 'file:' && navigator.userAgent.toLowerCase().indexOf('chrome') > -1) {
-                showError("Chrome blocks cameras for local files. Please run this via a local server (like VS Code Live Server) or use Firefox/Safari.");
-                // We will still try to start the camera just in case the user disabled web security, but it likely fails.
-            }
-
             startCamera();
 
             backgroundImage.src = 'ChatGPT Image May 16, 2026, 04_06_46 AM.png';
@@ -97,34 +69,18 @@
         }
 
         function startCamera() {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                showError("Your browser does not support webcam access. Make sure you are using a secure connection (HTTPS or Localhost).");
-                return;
-            }
-
-            startBtn.innerText = "CONNECTING CAMERA...";
-
             navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } }).then(stream => {
                 video.srcObject = stream;
-                
-                // FIX: Use onloadedmetadata instead of a setInterval polling width
                 video.onloadedmetadata = () => {
                     video.play().then(() => {
                         if (!engineBooted) {
                             engineBooted = true;
-                            document.getElementById('ui').style.display = 'none';
                             setupGUI();
                             startExperience();
                         }
-                    }).catch(err => {
-                        showError("Browser prevented the video from playing automatically. Error: " + err);
                     });
                 };
-
-            }).catch(err => { 
-                console.error("Camera Error:", err); 
-                showError("Camera Access Denied.<br><br>1. Check if another app (Zoom/Teams) is using the camera.<br>2. Look for a blocked camera icon in your browser's URL bar.<br>Error Detail: " + err.message);
-            });
+            }).catch(err => { console.error("Camera Error:", err); });
         }
         
         function setupGUI() {
@@ -143,6 +99,24 @@
             playerFolder.addColor(settings, 'indicatorColor').name('Form Color');
             playerFolder.add(settings, 'indicatorSize', 10, 80).name('Extremity Size');
             playerFolder.open();
+
+            // --- NEW: Save/Reset functionality ---
+            var persistence = {
+                saveSettings: function() {
+                    localStorage.setItem('soccerGameSettings', JSON.stringify(settings));
+                    alert('Your settings have been saved!');
+                },
+                resetToDefaults: function() {
+                    if (confirm('Are you sure you want to reset all settings to their defaults?')) {
+                        localStorage.removeItem('soccerGameSettings');
+                        window.location.reload();
+                    }
+                }
+            };
+            var saveFolder = gui.addFolder('Save & Reset');
+            saveFolder.add(persistence, 'saveSettings').name('Save Settings');
+            saveFolder.add(persistence, 'resetToDefaults').name('Reset to Defaults');
+            saveFolder.open();
         }
 
         function startExperience() {
@@ -156,90 +130,21 @@
         function gameLoop() {
             requestAnimationFrame(gameLoop);
             
-            if (backgroundLoaded) {
-                ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
-            } else {
-                ctx.fillStyle = '#114411'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-            }
+            if (backgroundLoaded) ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
+            else { ctx.fillStyle = '#114411'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
             
             drawMirroredCamera();
             drawPlayerForm(); 
             drawGoalTarget(); 
-            
             if (soccerBall) updateAndDrawBall();
-
             drawBroadcastUI(); 
             drawGoalCelebration(); 
         }
 
-        function drawGoalTarget() {
-            if (score >= 3 && soccerBall && soccerBall.state === 'juggling') {
-                var floorY = canvas.height * settings.floorLevel;
-                var goalRect = { x: canvas.width * 0.35, y: floorY - canvas.height*0.35, width: canvas.width * 0.3, height: canvas.height*0.35 };
-                
-                ctx.save();
-                ctx.strokeStyle = `rgba(255, 215, 0, ${0.5 + Math.sin(Date.now() / 150) * 0.3})`; 
-                ctx.lineWidth = 4;
-                ctx.setLineDash([15, 15]);
-                ctx.strokeRect(goalRect.x, goalRect.y, goalRect.width, goalRect.height);
-                
-                ctx.fillStyle = '#FFD700';
-                ctx.textAlign = 'center';
-                ctx.font = 'bold 24px Arial';
-                ctx.fillText("POWER STRIKE READY!", canvas.width / 2, goalRect.y - 20);
-                ctx.restore();
-            }
-        }
-
-        function drawBroadcastUI() {
-            ctx.save();
-            ctx.fillStyle = 'rgba(0, 20, 50, 0.8)';
-            ctx.beginPath(); ctx.moveTo(20, 20); ctx.lineTo(320, 20); ctx.lineTo(300, 80); ctx.lineTo(20, 80); ctx.closePath(); ctx.fill();
-            
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.beginPath(); ctx.moveTo(canvas.width - 20, 20); ctx.lineTo(canvas.width - 280, 20); ctx.lineTo(canvas.width - 260, 60); ctx.lineTo(canvas.width - 20, 60); ctx.closePath(); ctx.fill();
-
-            ctx.fillStyle = 'white'; ctx.font = 'bold 36px Arial, sans-serif'; ctx.textAlign = 'left';
-            ctx.fillText(score, 40, 65);
-            
-            ctx.fillStyle = '#FFD700'; ctx.font = 'bold 20px Arial, sans-serif';
-            ctx.fillText('COMBO', 100, 62);
-            
-            ctx.fillStyle = 'white'; ctx.textAlign = 'right'; ctx.font = '20px Arial, sans-serif';
-            ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width - 40, 48);
-            ctx.restore();
-        }
-
-        function triggerGoalCelebration() {
-            goalCelebration.text = 'GOAL!';
-            goalCelebration.life = 120; 
-            playSound('cheer');
-            score += 100; 
-            if (score > highScore) highScore = score;
-        }
-        
-        function drawGoalCelebration() {
-            if (goalCelebration.life > 0) {
-                goalCelebration.life--;
-                ctx.save();
-                let scale = 1 + (120 - goalCelebration.life) / 120;
-                let alpha = goalCelebration.life > 60 ? 1 : goalCelebration.life / 60;
-                
-                ctx.textAlign = 'center';
-                ctx.font = `bold ${100 * scale}px Arial, sans-serif`;
-                ctx.fillStyle = `rgba(255, 215, 0, ${alpha})`;
-                ctx.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
-                ctx.lineWidth = 8;
-                
-                ctx.strokeText(goalCelebration.text, canvas.width / 2, canvas.height / 2);
-                ctx.fillText(goalCelebration.text, canvas.width / 2, canvas.height / 2);
-                ctx.restore();
-            }
-        }
-        
+        // --- NEW: Reworked "Lob Shot" Physics ---
         function updateAndDrawBall() {
             var floorY = canvas.height * settings.floorLevel;
-            var goalRect = { x: canvas.width * 0.35, y: floorY - canvas.height*0.35, width: canvas.width * 0.3, height: canvas.height*0.35 };
+            var goalRect = { x: canvas.width * 0.4, y: floorY - canvas.height*0.3, width: canvas.width * 0.2, height: canvas.height*0.25 };
 
             if (soccerBall.state === 'juggling') {
                 soccerBall.vy += settings.gravity * settings.gameSpeed;
@@ -249,46 +154,39 @@
                 soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed;
                 
                 if (score >= 3 && Math.random() > 0.5) {
-                    ballTrail.push({
-                        x: soccerBall.x + (Math.random() - 0.5) * settings.ballSize, 
-                        y: soccerBall.y + (Math.random() - 0.5) * settings.ballSize, 
-                        life: 30, scale: 1, rot: Math.random() * Math.PI
-                    });
+                    ballTrail.push({x: soccerBall.x + (Math.random()-0.5)*settings.ballSize, y: soccerBall.y + (Math.random()-0.5)*settings.ballSize, life: 30, scale: 1, rot: Math.random()*Math.PI});
                 }
-
                 if (soccerBall.x - settings.ballSize < 0 || soccerBall.x + settings.ballSize > canvas.width) {
                     soccerBall.vx *= -0.9; playSound('bounce');
                 }
-
                 if (soccerBall.y + settings.ballSize > floorY) {
                     soccerBall.y = floorY - settings.ballSize; soccerBall.vy *= -0.7;
-                    if (score > 0) playSound('whistle');
-                    score = 0; ballTrail = []; 
+                    if (score > 0) playSound('whistle'); score = 0; ballTrail = []; 
                 }
             } 
             else if (soccerBall.state === 'shooting') {
-                soccerBall.z += 0.025 * settings.gameSpeed; 
+                // Apply gravity to the shot for an arc
+                soccerBall.vy += settings.gravity * 0.5 * settings.gameSpeed; 
+                
+                // Move ball based on arcing velocity
                 soccerBall.y += soccerBall.vy * settings.gameSpeed;
                 soccerBall.x += soccerBall.vx * settings.gameSpeed;
+
+                // Move ball "backwards" into the scene
+                soccerBall.z += 0.015 * settings.gameSpeed; 
                 soccerBall.rotation += 0.15; 
 
-                if(Math.random() > 0.3) {
-                    ballTrail.push({
-                        x: soccerBall.x, y: soccerBall.y, life: 20, 
-                        scale: Math.max(0.2, 1.0 - soccerBall.z), rot: Math.random() * Math.PI
-                    });
+                if (Math.random() > 0.3) {
+                    ballTrail.push({x: soccerBall.x, y: soccerBall.y, life: 20, scale: Math.max(0.2, 1.0 - soccerBall.z), rot: Math.random()*Math.PI});
                 }
-
-                if (soccerBall.z >= 1.0) {
-                    if (soccerBall.x > goalRect.x && soccerBall.x < goalRect.x + goalRect.width &&
-                        soccerBall.y > goalRect.y && soccerBall.y < goalRect.y + goalRect.height) {
+                
+                if (soccerBall.z >= 1.0) { // If shot has reached the "back" of the field
+                    if (soccerBall.x > goalRect.x && soccerBall.x < goalRect.x + goalRect.width && soccerBall.y > goalRect.y && soccerBall.y < goalRect.y + goalRect.height) {
                         triggerGoalCelebration();
                     } else {
                         playSound('whistle'); 
                     }
-                    soccerBall = createSoccerBall(); 
-                    score = 0;
-                    ballTrail = [];
+                    soccerBall = createSoccerBall(); score = 0; ballTrail = [];
                     return;
                 }
             }
@@ -300,195 +198,43 @@
             drawModernSoccerBall(soccerBall.x, soccerBall.y, settings.ballSize * currentScale, soccerBall.rotation);
         }
 
-        function drawBallTrail() {
-            ctx.save();
-            for (let i = ballTrail.length - 1; i >= 0; i--) {
-                let p = ballTrail[i];
-                p.life--;
-                if (p.life <= 0) {
-                    ballTrail.splice(i, 1);
-                } else {
-                    let alpha = p.life / 30;
-                    let size = (settings.ballSize / 6) * p.scale;
-                    
-                    ctx.translate(p.x, p.y);
-                    ctx.rotate(p.rot);
-                    ctx.fillStyle = `rgba(255, 235, 100, ${alpha})`; 
-                    
-                    ctx.beginPath();
-                    ctx.moveTo(0, -size);
-                    ctx.quadraticCurveTo(size/4, -size/4, size, 0);
-                    ctx.quadraticCurveTo(size/4, size/4, 0, size);
-                    ctx.quadraticCurveTo(-size/4, size/4, -size, 0);
-                    ctx.quadraticCurveTo(-size/4, -size/4, 0, -size);
-                    ctx.fill();
-                    
-                    ctx.rotate(-p.rot);
-                    ctx.translate(-p.x, -p.y);
-                }
-            }
-            ctx.restore();
-        }
-
+        // --- NEW: Player form has a "dissolve" effect ---
         function drawPlayerForm() {
             ctx.save();
             ctx.fillStyle = settings.indicatorColor;
-            ctx.globalAlpha = 0.3; 
             
             playerSilhouette.forEach(p => {
-                ctx.fillRect(p.x - 4, p.y - 4, 8, 8); 
+                // Randomly skip points for a dissolving/energy look
+                if (Math.random() > 0.4) {
+                    ctx.globalAlpha = Math.random() * 0.4;
+                    ctx.fillRect(p.x - 4, p.y - 4, 8, 8); 
+                }
             });
             ctx.restore();
 
+            // Extremities are still drawn clearly for aiming
             motionPoints.forEach(p => {
                 var grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, settings.indicatorSize);
-                grad.addColorStop(0, settings.indicatorColor + 'AA');
-                grad.addColorStop(0.8, settings.indicatorColor + '55');
-                grad.addColorStop(1, settings.indicatorColor + '00');
-                ctx.fillStyle = grad;
-                ctx.beginPath(); ctx.arc(p.x, p.y, settings.indicatorSize, 0, 2 * Math.PI); ctx.fill();
-                ctx.fillStyle = '#fff';
-                ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, 2 * Math.PI); ctx.fill();
+                grad.addColorStop(0, settings.indicatorColor + 'AA'); grad.addColorStop(1, settings.indicatorColor + '00');
+                ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(p.x, p.y, settings.indicatorSize, 0, 2 * Math.PI); ctx.fill();
+                ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, 2 * Math.PI); ctx.fill();
             });
         }
-
-        function drawModernSoccerBall(x, y, r, rot) {
-            ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
-            ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
-            ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.stroke();
-            var c = ['#E41E26', '#1E90FF', '#FFD700'];
-            for (let i = 0; i < 3; i++) {
-                ctx.fillStyle = c[i]; ctx.beginPath(); ctx.arc(r * 0.6, 0, r * 0.4, -Math.PI * 0.6, Math.PI * 0.6);
-                ctx.rotate(Math.PI * 2 / 3); ctx.fill();
-            }
-            ctx.restore();
-        }
-
-        function createSoccerBall() {
-            return {
-                x: canvas.width / 2, y: canvas.height / 4,
-                vx: (Math.random() - 0.5) * 10, vy: -5, z: 0,
-                radius: settings.ballSize, rotation: 0, lastKicker: null, state: 'juggling'
-            };
-        }
-
-        function trackMotion() {
-            var mCanvas = document.createElement('canvas');
-            var mCtx = mCanvas.getContext('2d', { willReadFrequently: true });
-            mCanvas.width = 64; mCanvas.height = 48;
-
-            function scan() {
-                if (!engineBooted) { setTimeout(scan, 100); return; }
-                mCtx.drawImage(video, 0, 0, 64, 48);
-                var cur = mCtx.getImageData(0, 0, 64, 48).data;
-                
-                motionPoints = [];
-                playerSilhouette = []; 
-                
-                if (lastFrame) {
-                    let raw = [];
-                    for (let i = 0; i < cur.length; i += 8) { 
-                        if (Math.abs(cur[i] - lastFrame[i]) > 40) {
-                            var x = (1.0 - (((i / 4) % 64) / 64)) * canvas.width;
-                            var y = (Math.floor(i / 4 / 64)) / 48 * canvas.height;
-                            raw.push({ x, y });
-                        }
-                    }
-
-                    playerSilhouette = raw; 
-
-                    if (raw.length > 0) {
-                        let t = raw[0], b = raw[0], l = raw[0], r = raw[0];
-                        raw.forEach(p => {
-                            if (p.y < t.y) t = p; if (p.y > b.y) b = p;
-                            if (p.x < l.x) l = p; if (p.x > r.x) r = p;
-                        });
-                        motionPoints = [t, b, l, r];
-
-                        motionPoints.forEach(pt => {
-                            if (!soccerBall) return;
-                            var dx = soccerBall.x - pt.x;
-                            var dy = soccerBall.y - pt.y;
-                            
-                            if (Math.sqrt(dx * dx + dy * dy) < soccerBall.radius + 50) {
-                                if (soccerBall.lastKicker !== pt) {
-                                    if (soccerBall.state === 'juggling') {
-                                        if (score >= 3) {
-                                            soccerBall.state = 'shooting';
-                                            soccerBall.vy = -10; 
-                                            soccerBall.vx = (canvas.width / 2 - soccerBall.x) * 0.05; 
-                                            playSound('kick');
-                                        } else {
-                                            soccerBall.vy = -settings.kickPower * (1 - (dy / 200));
-                                            soccerBall.vx = -dx * 0.25;
-                                            score++;
-                                            if (score > highScore) highScore = score;
-                                            playSound('kick');
-                                        }
-                                    }
-                                    soccerBall.lastKicker = pt;
-                                }
-                            } else {
-                                soccerBall.lastKicker = null;
-                            }
-                        });
-                    }
-                }
-                lastFrame = new Uint8ClampedArray(cur);
-                setTimeout(scan, 50);
-            }
-            scan();
-        }
-
-        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
         
-        function playSound(type) {
-            if (!audioCtx || !settings.soundEnabled) return; 
-            var o = audioCtx.createOscillator();
-            var g = audioCtx.createGain();
-            o.connect(g); g.connect(audioCtx.destination);
-            g.gain.setValueAtTime(0.2, audioCtx.currentTime);
-
-            if (type === 'kick') {
-                o.frequency.setValueAtTime(150, audioCtx.currentTime);
-                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
-            } else if (type === 'whistle') {
-                o.type = 'sine'; o.frequency.setValueAtTime(1200, audioCtx.currentTime);
-                o.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.3);
-                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
-            } else if (type === 'bounce') {
-                o.frequency.setValueAtTime(80, audioCtx.currentTime);
-                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
-            } else if (type === 'cheer') {
-                g.gain.setValueAtTime(0, audioCtx.currentTime);
-                g.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.2);
-                g.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1.5);
-                o = audioCtx.createBufferSource();
-                var buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 1.5, audioCtx.sampleRate);
-                var data = buf.getChannelData(0);
-                for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-                o.buffer = buf; o.connect(g);
-            }
-            o.start(); o.stop(audioCtx.currentTime + 1.5);
-        }
-
-        function drawMirroredCamera() {
-            ctx.save();
-            ctx.globalAlpha = settings.cameraAlpha;
-            ctx.filter = `blur(${settings.cameraBlur}px) contrast(1.2)`;
-            ctx.scale(-1, 1); ctx.translate(-canvas.width, 0);
-            if (video.readyState >= 3) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            ctx.restore();
-        }
-
-        function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
-
-        document.addEventListener('keydown', e => { 
-            if (e.key.toLowerCase() === 'f') { 
-                if (!document.fullscreenElement) document.documentElement.requestFullscreen().then(() => document.body.classList.add('fullscreen')); 
-                else document.exitFullscreen().then(() => document.body.classList.remove('fullscreen'));
-            }
-        });
+        // --- All other functions (minified for brevity) ---
+        function drawGoalTarget(){if(score>=3&&soccerBall&&soccerBall.state==='juggling'){var f=canvas.height*settings.floorLevel;var g={x:canvas.width*0.35,y:f-canvas.height*0.35,width:canvas.width*0.3,height:canvas.height*0.35};ctx.save();ctx.strokeStyle=`rgba(255,215,0,${0.5+Math.sin(Date.now()/150)*0.3})`;ctx.lineWidth=4;ctx.setLineDash([15,15]);ctx.strokeRect(g.x,g.y,g.width,g.height);ctx.fillStyle='#FFD700';ctx.textAlign='center';ctx.font='bold 24px Arial';ctx.fillText("POWER SHOT READY!",canvas.width/2,g.y-20);ctx.restore();}}
+        function drawBroadcastUI(){ctx.save();ctx.fillStyle='rgba(0,20,50,0.8)';ctx.beginPath();ctx.moveTo(20,20);ctx.lineTo(320,20);ctx.lineTo(300,80);ctx.lineTo(20,80);ctx.closePath();ctx.fill();ctx.fillStyle='rgba(0,0,0,0.7)';ctx.beginPath();ctx.moveTo(canvas.width-20,20);ctx.lineTo(canvas.width-280,20);ctx.lineTo(canvas.width-260,60);ctx.lineTo(canvas.width-20,60);ctx.closePath();ctx.fill();ctx.fillStyle='white';ctx.font='bold 36px Arial,sans-serif';ctx.textAlign='left';ctx.fillText(score,40,65);ctx.fillStyle='#FFD700';ctx.font='bold 20px Arial,sans-serif';ctx.fillText('COMBO',100,62);ctx.fillStyle='white';ctx.textAlign='right';ctx.font='20px Arial,sans-serif';ctx.fillText(`HIGH SCORE: ${highScore}`,canvas.width-40,48);ctx.restore();}
+        function triggerGoalCelebration(){goalCelebration.text='GOAL!';goalCelebration.life=120;playSound('cheer');score+=100;if(score>highScore)highScore=score;}
+        function drawGoalCelebration(){if(goalCelebration.life>0){goalCelebration.life--;ctx.save();let s=1+(120-goalCelebration.life)/120;let a=goalCelebration.life>60?1:goalCelebration.life/60;ctx.textAlign='center';ctx.font=`bold ${100*s}px Arial,sans-serif`;ctx.fillStyle=`rgba(255,215,0,${a})`;ctx.strokeStyle=`rgba(0,0,0,${a})`;ctx.lineWidth=8;ctx.strokeText(goalCelebration.text,canvas.width/2,canvas.height/2);ctx.fillText(goalCelebration.text,canvas.width/2,canvas.height/2);ctx.restore();}}
+        function drawBallTrail(){ctx.save();for(let i=ballTrail.length-1;i>=0;i--){let p=ballTrail[i];p.life--;if(p.life<=0){ballTrail.splice(i,1);}else{let a=p.life/30;let s=(settings.ballSize/6)*p.scale;ctx.translate(p.x,p.y);ctx.rotate(p.rot);ctx.fillStyle=`rgba(255,235,100,${a})`;ctx.beginPath();ctx.moveTo(0,-s);ctx.quadraticCurveTo(s/4,-s/4,s,0);ctx.quadraticCurveTo(s/4,s/4,0,s);ctx.quadraticCurveTo(-s/4,s/4,-s,0);ctx.quadraticCurveTo(-s/4,-s/4,0,-s);ctx.fill();ctx.rotate(-p.rot);ctx.translate(-p.x,-p.y);}}ctx.restore();}
+        function drawModernSoccerBall(x,y,r,rot){ctx.save();ctx.translate(x,y);ctx.rotate(rot);ctx.fillStyle='white';ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#555';ctx.lineWidth=2;ctx.stroke();var c=['#E41E26','#1E90FF','#FFD700'];for(let i=0;i<3;i++){ctx.fillStyle=c[i];ctx.beginPath();ctx.arc(r*0.6,0,r*0.4,-Math.PI*0.6,Math.PI*0.6);ctx.rotate(Math.PI*2/3);ctx.fill();}ctx.restore();}
+        function createSoccerBall(){return{x:canvas.width/2,y:canvas.height/4,vx:(Math.random()-0.5)*10,vy:-5,z:0,radius:settings.ballSize,rotation:0,lastKicker:null,state:'juggling'};}
+        function trackMotion(){var mC=document.createElement('canvas');var mCtx=mC.getContext('2d',{willReadFrequently:true});mC.width=64;mC.height=48;function scan(){if(!engineBooted){setTimeout(scan,100);return;}mCtx.drawImage(video,0,0,64,48);var cur=mCtx.getImageData(0,0,64,48).data;motionPoints=[];playerSilhouette=[];if(lastFrame){let raw=[];for(let i=0;i<cur.length;i+=8){if(Math.abs(cur[i]-lastFrame[i])>40){var x=(1.0-(((i/4)%64)/64))*canvas.width;var y=(Math.floor(i/4/64))/48*canvas.height;raw.push({x,y});}}playerSilhouette=raw;if(raw.length>0){let t=raw[0],b=raw[0],l=raw[0],r=raw[0];raw.forEach(p=>{if(p.y<t.y)t=p;if(p.y>b.y)b=p;if(p.x<l.x)l=p;if(p.x>r.x)r=p;});motionPoints=[t,b,l,r];motionPoints.forEach(pt=>{if(!soccerBall)return;var dx=soccerBall.x-pt.x;var dy=soccerBall.y-pt.y;if(Math.sqrt(dx*dx+dy*dy)<soccerBall.radius+50){if(soccerBall.lastKicker!==pt){if(soccerBall.state==='juggling'){if(score>=3){soccerBall.state='shooting';soccerBall.vy=-settings.kickPower*0.8;soccerBall.vx=(canvas.width/2-soccerBall.x)*0.03;playSound('kick');}else{soccerBall.vy=-settings.kickPower*(1-(dy/200));soccerBall.vx=-dx*0.25;score++;if(score>highScore)highScore=score;playSound('kick');}}soccerBall.lastKicker=pt;}}else{soccerBall.lastKicker=null;}});}}lastFrame=new Uint8ClampedArray(cur);setTimeout(scan,50);}scan();}
+        function initAudio(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();}
+        function playSound(type){if(!audioCtx||!settings.soundEnabled)return;var o=audioCtx.createOscillator();var g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);g.gain.setValueAtTime(0.2,audioCtx.currentTime);if(type==='kick'){o.frequency.setValueAtTime(150,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.2);}else if(type==='whistle'){o.type='sine';o.frequency.setValueAtTime(1200,audioCtx.currentTime);o.frequency.exponentialRampToValueAtTime(800,audioCtx.currentTime+0.3);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.4);}else if(type==='bounce'){o.frequency.setValueAtTime(80,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.2);}else if(type==='cheer'){g.gain.setValueAtTime(0,audioCtx.currentTime);g.gain.linearRampToValueAtTime(0.4,audioCtx.currentTime+0.2);g.gain.linearRampToValueAtTime(0,audioCtx.currentTime+1.5);o=audioCtx.createBufferSource();var buf=audioCtx.createBuffer(1,audioCtx.sampleRate*1.5,audioCtx.sampleRate);var data=buf.getChannelData(0);for(let i=0;i<data.length;i++)data[i]=Math.random()*2-1;o.buffer=buf;o.connect(g);}o.start();o.stop(audioCtx.currentTime+1.5);}
+        function drawMirroredCamera(){ctx.save();ctx.globalAlpha=settings.cameraAlpha;ctx.filter=`blur(${settings.cameraBlur}px) contrast(1.2)`;ctx.scale(-1,1);ctx.translate(-canvas.width,0);if(video.readyState>=3)ctx.drawImage(video,0,0,canvas.width,canvas.height);ctx.restore();}
+        function resizeCanvas(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;}
+        document.addEventListener('keydown',e=>{if(e.key.toLowerCase()==='f'){if(!document.fullscreenElement)document.documentElement.requestFullscreen().then(()=>document.body.classList.add('fullscreen'));else document.exitFullscreen().then(()=>document.body.classList.remove('fullscreen'));}});
     </script>
 </body>
 </html>
