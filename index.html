@@ -8,7 +8,6 @@
         canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
         #webcam { transform: scaleX(-1); display: none; }
         
-        /* RESTORED: UI Overlay for Start Button */
         #ui {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center; align-items: center;
@@ -28,7 +27,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
 </head>
 <body>
-    <!-- RESTORED: Start Screen -->
     <div id="ui">
         <h1 style="letter-spacing: 2px; font-size: 3em; font-weight: bold; margin-bottom: 10px;">STADIUM KEEP-UP</h1>
         <p style="color: #ddd; font-size: 1.2em; margin-bottom: 40px;">Use your hands and feet to keep the soccer ball in the air!</p>
@@ -43,29 +41,23 @@
         var canvas = document.getElementById('gameCanvas');
         var ctx = canvas.getContext('2d');
 
-        var soccerBall = null;
-        var motionPoints = [];
-        var grassBlades = []; 
-        var lastFrame = null;
-        var engineBooted = false;
-
-        var score = 0, highScore = 0;
+        var soccerBall = null, motionPoints = [], grassBlades = [], lastFrame = null;
+        var engineBooted = false, score = 0, highScore = 0;
+        var flagOffset = 0; // For animating the flags
 
         var settings = {
-            gameSpeed: 1.0,      
-            kickPower: 18,
-            ballSize: 60,        
-            gravity: 0.45,
-            cameraAlpha: 0.15,
-            cameraBlur: 6,
+            gameSpeed: 1.0, kickPower: 18, ballSize: 60, gravity: 0.45,
+            cameraAlpha: 0.15, cameraBlur: 6,
+            // NEW: Restored settings for touch indicators
+            indicatorColor: '#ffffff',
+            indicatorSize: 40,
         };
 
-        var audioCtx; 
+        var audioCtx;
 
-        // --- RESTORED: User-triggered start sequence ---
         function startApp() {
-            document.getElementById('ui').style.display = 'none'; // Hide the start screen
-            initAudio(); // Safe to start audio now that the user clicked
+            document.getElementById('ui').style.display = 'none';
+            initAudio();
 
             navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
                 video.srcObject = stream;
@@ -75,7 +67,6 @@
                         clearInterval(checkInterval);
                         engineBooted = true;
                         
-                        // Setup settings menu
                         var gui = new dat.GUI();
                         var gameFolder = gui.addFolder('Game Settings');
                         gameFolder.add(settings, 'gameSpeed', 0.5, 2.0).name('Game Speed');
@@ -89,12 +80,18 @@
                         cameraFolder.add(settings, 'cameraAlpha', 0.0, 0.5).name('Visibility');
                         cameraFolder.add(settings, 'cameraBlur', 0, 20).name('Blur');
 
+                        // NEW: GUI for touch points
+                        var touchFolder = gui.addFolder('Touch Points');
+                        touchFolder.addColor(settings, 'indicatorColor').name('Color');
+                        touchFolder.add(settings, 'indicatorSize', 10, 80).name('Size');
+                        touchFolder.open();
+
                         startExperience();
                     }
                 }, 100);
             }).catch(err => { 
                 console.error("Camera Error:", err); 
-                alert("Camera access is required to play. Please allow camera permissions and reload.");
+                alert("Camera access is required. Please allow permissions and reload.");
             });
         }
 
@@ -112,241 +109,105 @@
             gameLoop();
         }
 
-        function drawModernSoccerBall(x, y, radius, rotation) {
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.rotate(rotation);
-
-            ctx.fillStyle = 'white';
-            ctx.beginPath();
-            ctx.arc(0, 0, radius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#555';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-
-            var colors = ['#E41E26', '#1E90FF', '#FFD700']; 
-            for (let i = 0; i < 3; i++) {
-                ctx.fillStyle = colors[i];
-                ctx.beginPath();
-                ctx.arc(radius * 0.6, 0, radius * 0.4, -Math.PI * 0.6, Math.PI * 0.6);
-                ctx.rotate(Math.PI * 2 / 3);
-                ctx.fill();
-            }
-            ctx.restore();
-        }
-
-        function drawStadiumBackground() {
+        // --- NEW: International Stadium Background ---
+        function drawInternationalStadium() {
             var floorY = canvas.height * 0.9;
 
+            // Night Sky
             var skyGrad = ctx.createLinearGradient(0, 0, 0, floorY);
-            skyGrad.addColorStop(0, '#001030'); 
-            skyGrad.addColorStop(1, '#003366'); 
+            skyGrad.addColorStop(0, '#001030'); skyGrad.addColorStop(1, '#003366');
             ctx.fillStyle = skyGrad;
             ctx.fillRect(0, 0, canvas.width, floorY);
 
+            // Stadium Lights
             for (let i = 0; i < 5; i++) {
-                let lightX = (canvas.width / 4) * i;
-                ctx.fillStyle = 'rgba(255, 255, 220, 0.8)';
-                ctx.beginPath();
-                ctx.ellipse(lightX, -20, 150, 40, 0, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.fillStyle = 'rgba(255, 255, 220, 0.8)'; ctx.beginPath();
+                ctx.ellipse((canvas.width / 4) * i, -20, 150, 40, 0, 0, Math.PI * 2); ctx.fill();
             }
 
-            ctx.fillStyle = 'rgba(20, 20, 30, 0.7)';
-            ctx.fillRect(0, floorY - 150, canvas.width, 150);
+            // --- NEW: Scrolling International Flags Banner ---
+            var flagColors = [
+                ['#00247D', '#FFFFFF', '#CF142B'], // UK
+                ['#000000', '#FFDE00', '#FF0000'], // Germany
+                ['#009246', '#FFFFFF', '#CE2B37'], // Italy
+                ['#FFC400', '#C1272D'],             // Spain
+                ['#005293', '#FFFFFF', '#ED2939'], // France
+                ['#0A3161', '#FFFFFF'],             // Brazil (simplified)
+                ['#B3A76B', '#FFFFFF', '#ED2939']  // Argentina (simplified)
+            ];
+            var flagWidth = 80;
+            var bannerY = floorY - 150;
+            var bannerHeight = 150;
+            flagOffset = (flagOffset + 0.5 * settings.gameSpeed) % (flagWidth * flagColors.length);
 
-            ctx.fillStyle = '#228B22'; 
+            ctx.save();
+            ctx.rect(0, bannerY, canvas.width, bannerHeight);
+            ctx.clip(); // Don't let flags draw outside the banner area
+            
+            for (let i = -flagColors.length; i < (canvas.width / flagWidth) + flagColors.length; i++) {
+                let flagIndex = (i % flagColors.length + flagColors.length) % flagColors.length;
+                let currentFlag = flagColors[flagIndex];
+                let flagX = (i * flagWidth) - flagOffset;
+                
+                let stripeHeight = bannerHeight / currentFlag.length;
+                for (let j = 0; j < currentFlag.length; j++) {
+                    ctx.fillStyle = currentFlag[j];
+                    ctx.fillRect(flagX, bannerY + (j * stripeHeight), flagWidth, stripeHeight);
+                }
+                ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(flagX, bannerY, flagWidth, bannerHeight);
+            }
+            ctx.restore();
+
+
+            // Field
+            ctx.fillStyle = '#228B22';
             ctx.fillRect(0, floorY, canvas.width, canvas.height - floorY);
-
             ctx.strokeStyle = 'rgba(255,255,255,0.5)';
             ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.moveTo(0, floorY);
-            ctx.lineTo(canvas.width, floorY);
-            ctx.stroke();
-
-            ctx.beginPath();
-            ctx.arc(canvas.width / 2, floorY, 100, 0, Math.PI * 2);
-            ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, floorY); ctx.lineTo(canvas.width, floorY); ctx.stroke();
+            ctx.beginPath(); ctx.arc(canvas.width / 2, floorY, 100, 0, Math.PI * 2); ctx.stroke();
         }
-        
-        function drawInteractiveGrass() {
-            var floorY = canvas.height * 0.9;
-            ctx.strokeStyle = '#3CB371';
-            ctx.lineWidth = 2;
 
-            grassBlades.forEach(blade => {
-                var bendAmount = 0;
-                motionPoints.forEach(pt => {
-                    let dist = Math.abs(pt.x - blade.x);
-                    if (dist < 50 && pt.y > floorY - 50) {
-                        bendAmount = (pt.x - blade.x) * 0.5;
-                    }
-                });
-                blade.bend += (bendAmount - blade.bend) * 0.2;
-
+        // --- NEW: Function to draw touch indicators ---
+        function drawTouchIndicators() {
+            motionPoints.forEach(p => {
+                var grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, settings.indicatorSize * 1.5);
+                grad.addColorStop(0, settings.indicatorColor + '99'); // More visible core
+                grad.addColorStop(1, settings.indicatorColor + '00');
+                ctx.fillStyle = grad;
                 ctx.beginPath();
-                ctx.moveTo(blade.x, blade.y);
-                ctx.quadraticCurveTo(blade.x + blade.bend, blade.y - blade.height / 2, blade.x, blade.y - blade.height);
-                ctx.stroke();
+                ctx.arc(p.x, p.y, settings.indicatorSize * 1.5, 0, 2 * Math.PI);
+                ctx.fill();
             });
         }
 
         function gameLoop() {
             requestAnimationFrame(gameLoop);
             
-            drawStadiumBackground(); 
-            drawInteractiveGrass(); 
+            drawInternationalStadium();
+            drawInteractiveGrass();
+            
             drawMirroredCamera();
+            drawTouchIndicators(); // Draw the indicators
             
             if (soccerBall) updateAndDrawBall();
             drawUI();
         }
-        
-        function updateAndDrawBall() {
-            var floorY = canvas.height * 0.9;
-            
-            soccerBall.vy += settings.gravity * settings.gameSpeed;
-            soccerBall.x += soccerBall.vx * settings.gameSpeed;
-            soccerBall.y += soccerBall.vy * settings.gameSpeed;
 
-            soccerBall.vx *= 0.98;
-            soccerBall.vy *= 0.98;
-            soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed;
-
-            if (soccerBall.x - settings.ballSize < 0 || soccerBall.x + settings.ballSize > canvas.width) {
-                soccerBall.vx *= -0.9;
-            }
-
-            if (soccerBall.y + settings.ballSize > floorY) {
-                soccerBall.y = floorY - settings.ballSize;
-                soccerBall.vy *= -0.7;
-                if (score > 0) playSound('whistle');
-                score = 0;
-            }
-
-            drawModernSoccerBall(soccerBall.x, soccerBall.y, settings.ballSize, soccerBall.rotation);
-        }
-
-        function createSoccerBall() {
-            return {
-                x: canvas.width / 2, y: canvas.height / 4,
-                vx: (Math.random() - 0.5) * 10, vy: -5,
-                radius: settings.ballSize, rotation: 0, lastKicker: null
-            };
-        }
-
-        function trackMotion() {
-            var mCanvas = document.createElement('canvas');
-            var mCtx = mCanvas.getContext('2d', { willReadFrequently: true });
-            mCanvas.width = 64; mCanvas.height = 48;
-
-            function scan() {
-                if (!engineBooted) { setTimeout(scan, 100); return; }
-                mCtx.drawImage(video, 0, 0, 64, 48);
-                var current = mCtx.getImageData(0, 0, 64, 48).data;
-                motionPoints = [];
-                
-                if (lastFrame) {
-                    let rawMotion = [];
-                    for (let i = 0; i < current.length; i += 4) {
-                        if (Math.abs(current[i] - lastFrame[i]) > 45) {
-                            var x = (1.0 - (((i/4) % 64) / 64)) * canvas.width;
-                            var y = (Math.floor(i/4/64))/48 * canvas.height;
-                            rawMotion.push({ x, y });
-                        }
-                    }
-
-                    if (rawMotion.length > 0) {
-                        let topPt = rawMotion[0], bottomPt = rawMotion[0], leftPt = rawMotion[0], rightPt = rawMotion[0];
-                        rawMotion.forEach(p => {
-                            if (p.y < topPt.y) topPt = p; if (p.y > bottomPt.y) bottomPt = p;
-                            if (p.x < leftPt.x) leftPt = p; if (p.x > rightPt.x) rightPt = p;
-                        });
-                        motionPoints = [topPt, bottomPt, leftPt, rightPt];
-
-                        motionPoints.forEach(pt => {
-                            if (!soccerBall) return;
-                            var dx = soccerBall.x - pt.x;
-                            var dy = soccerBall.y - pt.y;
-                            if (Math.sqrt(dx*dx + dy*dy) < soccerBall.radius + 40) {
-                                if (soccerBall.lastKicker !== pt) {
-                                    soccerBall.vy = -settings.kickPower * (1 - (dy / 200));
-                                    soccerBall.vx = -dx * 0.2;
-                                    score++;
-                                    if (score > highScore) highScore = score;
-                                    playSound('kick');
-                                    soccerBall.lastKicker = pt;
-                                }
-                            } else {
-                                soccerBall.lastKicker = null;
-                            }
-                        });
-                    }
-                }
-                lastFrame = new Uint8ClampedArray(current);
-                setTimeout(scan, 50);
-            }
-            scan();
-        }
-
-        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
-        
-        function playSound(type) {
-            if (!audioCtx) return;
-            var osc = audioCtx.createOscillator();
-            var gainNode = audioCtx.createGain();
-            osc.connect(gainNode);
-            gainNode.connect(audioCtx.destination);
-            gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
-
-            if (type === 'kick') {
-                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
-            } else if (type === 'whistle') {
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
-                osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.3);
-                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
-            }
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.4);
-        }
-
-        function drawMirroredCamera() {
-            ctx.save();
-            ctx.globalAlpha = settings.cameraAlpha;
-            ctx.filter = `blur(${settings.cameraBlur}px)`;
-            ctx.scale(-1, 1); ctx.translate(-canvas.width, 0);
-            if (video.readyState >= 3) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            ctx.restore();
-        }
-
-        function drawUI() {
-            ctx.fillStyle = 'white';
-            ctx.textAlign = 'center';
-            ctx.font = 'bold 70px Arial, sans-serif';
-            ctx.strokeStyle = 'black';
-            ctx.lineWidth = 5;
-            ctx.strokeText(score, canvas.width / 2, 100);
-            ctx.fillText(score, canvas.width / 2, 100);
-
-            ctx.textAlign = 'right';
-            ctx.font = 'bold 30px Arial, sans-serif';
-            ctx.strokeText(`HIGH SCORE: ${highScore}`, canvas.width - 40, 70);
-            ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width - 40, 70);
-        }
-
-        function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
-
-        document.addEventListener('keydown', e => { 
-            if (e.key.toLowerCase() === 'f') { 
-                if (!document.fullscreenElement) document.documentElement.requestFullscreen().then(() => document.body.classList.add('fullscreen')); 
-                else document.exitFullscreen().then(() => document.body.classList.remove('fullscreen'));
-            }
-        });
-
+        // --- All other functions remain, just with minor calls added ---
+        function drawModernSoccerBall(x,y,r,rot){ctx.save();ctx.translate(x,y);ctx.rotate(rot);ctx.fillStyle='white';ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#555';ctx.lineWidth=2;ctx.stroke();var c=['#E41E26','#1E90FF','#FFD700'];for(let i=0;i<3;i++){ctx.fillStyle=c[i];ctx.beginPath();ctx.arc(r*0.6,0,r*0.4,-Math.PI*0.6,Math.PI*0.6);ctx.rotate(Math.PI*2/3);ctx.fill();}ctx.restore();}
+        function drawInteractiveGrass(){var f=canvas.height*0.9;ctx.strokeStyle='#3CB371';ctx.lineWidth=2;grassBlades.forEach(b=>{var a=0;motionPoints.forEach(p=>{let d=Math.abs(p.x-b.x);if(d<50&&p.y>f-50){a=(p.x-b.x)*0.5;}});b.bend+=(a-b.bend)*0.2;ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.quadraticCurveTo(b.x+b.bend,b.y-b.height/2,b.x,b.y-b.height);ctx.stroke();});}
+        function updateAndDrawBall(){var f=canvas.height*0.9;soccerBall.vy+=settings.gravity*settings.gameSpeed;soccerBall.x+=soccerBall.vx*settings.gameSpeed;soccerBall.y+=soccerBall.vy*settings.gameSpeed;soccerBall.vx*=0.98;soccerBall.vy*=0.98;soccerBall.rotation+=soccerBall.vx*0.02*settings.gameSpeed;if(soccerBall.x-settings.ballSize<0||soccerBall.x+settings.ballSize>canvas.width){soccerBall.vx*=-0.9;}if(soccerBall.y+settings.ballSize>f){soccerBall.y=f-settings.ballSize;soccerBall.vy*=-0.7;if(score>0)playSound('whistle');score=0;}drawModernSoccerBall(soccerBall.x,soccerBall.y,settings.ballSize,soccerBall.rotation);}
+        function createSoccerBall(){return{x:canvas.width/2,y:canvas.height/4,vx:(Math.random()-0.5)*10,vy:-5,radius:settings.ballSize,rotation:0,lastKicker:null};}
+        function trackMotion(){var mC=document.createElement('canvas');var mCtx=mC.getContext('2d',{willReadFrequently:true});mC.width=64;mC.height=48;function scan(){if(!engineBooted){setTimeout(scan,100);return;}mCtx.drawImage(video,0,0,64,48);var cur=mCtx.getImageData(0,0,64,48).data;motionPoints=[];if(lastFrame){let raw=[];for(let i=0;i<cur.length;i+=4){if(Math.abs(cur[i]-lastFrame[i])>45){var x=(1.0-(((i/4)%64)/64))*canvas.width;var y=(Math.floor(i/4/64))/48*canvas.height;raw.push({x,y});}}if(raw.length>0){let t=raw[0],b=raw[0],l=raw[0],r=raw[0];raw.forEach(p=>{if(p.y<t.y)t=p;if(p.y>b.y)b=p;if(p.x<l.x)l=p;if(p.x>r.x)r=p;});motionPoints=[t,b,l,r];motionPoints.forEach(pt=>{if(!soccerBall)return;var dx=soccerBall.x-pt.x;var dy=soccerBall.y-pt.y;if(Math.sqrt(dx*dx+dy*dy)<soccerBall.radius+40){if(soccerBall.lastKicker!==pt){soccerBall.vy=-settings.kickPower*(1-(dy/200));soccerBall.vx=-dx*0.2;score++;if(score>highScore)highScore=score;playSound('kick');soccerBall.lastKicker=pt;}}else{soccerBall.lastKicker=null;}});}}lastFrame=new Uint8ClampedArray(cur);setTimeout(scan,50);}scan();}
+        function initAudio(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();}
+        function playSound(type){if(!audioCtx)return;var o=audioCtx.createOscillator();var g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);g.gain.setValueAtTime(0.2,audioCtx.currentTime);if(type==='kick'){o.frequency.setValueAtTime(150,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.2);}else if(type==='whistle'){o.type='sine';o.frequency.setValueAtTime(1200,audioCtx.currentTime);o.frequency.exponentialRampToValueAtTime(800,audioCtx.currentTime+0.3);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.4);}o.start();o.stop(audioCtx.currentTime+0.4);}
+        function drawMirroredCamera(){ctx.save();ctx.globalAlpha=settings.cameraAlpha;ctx.filter=`blur(${settings.cameraBlur}px)`;ctx.scale(-1,1);ctx.translate(-canvas.width,0);if(video.readyState>=3)ctx.drawImage(video,0,0,canvas.width,canvas.height);ctx.restore();}
+        function drawUI(){ctx.fillStyle='white';ctx.textAlign='center';ctx.font='bold 70px Arial,sans-serif';ctx.strokeStyle='black';ctx.lineWidth=5;ctx.strokeText(score,canvas.width/2,100);ctx.fillText(score,canvas.width/2,100);ctx.textAlign='right';ctx.font='bold 30px Arial,sans-serif';ctx.strokeText(`HIGH SCORE: ${highScore}`,canvas.width-40,70);ctx.fillText(`HIGH SCORE: ${highScore}`,canvas.width-40,70);}
+        function resizeCanvas(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;if(engineBooted){grassBlades=[];var f=canvas.height*0.9;for(let i=0;i<canvas.width;i+=10){grassBlades.push({x:i,y:f,height:20+Math.random()*15,bend:0});}}}
+        document.addEventListener('keydown',e=>{if(e.key.toLowerCase()==='f'){if(!document.fullscreenElement)document.documentElement.requestFullscreen().then(()=>document.body.classList.add('fullscreen'));else document.exitFullscreen().then(()=>document.body.classList.remove('fullscreen'));}});
     </script>
 </body>
 </html>
