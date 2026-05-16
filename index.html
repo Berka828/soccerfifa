@@ -174,3 +174,262 @@
         }
 
         function triggerGoalCelebration() {
+            goalCelebration.text = 'GOAL!';
+            goalCelebration.life = 120; 
+            playSound('cheer');
+            score += 100; 
+            if (score > highScore) highScore = score;
+        }
+        
+        function drawGoalCelebration() {
+            if (goalCelebration.life > 0) {
+                goalCelebration.life--;
+                ctx.save();
+                let scale = 1 + (120 - goalCelebration.life) / 120;
+                let alpha = goalCelebration.life > 60 ? 1 : goalCelebration.life / 60;
+                
+                ctx.textAlign = 'center';
+                ctx.font = `bold ${100 * scale}px Arial, sans-serif`;
+                ctx.fillStyle = `rgba(255, 215, 0, ${alpha})`;
+                ctx.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
+                ctx.lineWidth = 8;
+                
+                ctx.strokeText(goalCelebration.text, canvas.width / 2, canvas.height / 2);
+                ctx.fillText(goalCelebration.text, canvas.width / 2, canvas.height / 2);
+                ctx.restore();
+            }
+        }
+        
+        function updateAndDrawBall() {
+            var floorY = canvas.height * settings.floorLevel;
+            var goalRect = { x: canvas.width * 0.35, y: floorY - canvas.height*0.35, width: canvas.width * 0.3, height: canvas.height*0.35 };
+
+            if (soccerBall.state === 'juggling') {
+                soccerBall.vy += settings.gravity * settings.gameSpeed;
+                soccerBall.x += soccerBall.vx * settings.gameSpeed;
+                soccerBall.y += soccerBall.vy * settings.gameSpeed;
+                soccerBall.vx *= 0.985; soccerBall.vy *= 0.985;
+                soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed;
+                
+                if (score >= 3 && Math.random() > 0.5) {
+                    ballTrail.push({
+                        x: soccerBall.x + (Math.random() - 0.5) * settings.ballSize, 
+                        y: soccerBall.y + (Math.random() - 0.5) * settings.ballSize, 
+                        life: 30, scale: 1, rot: Math.random() * Math.PI
+                    });
+                }
+
+                if (soccerBall.x - settings.ballSize < 0 || soccerBall.x + settings.ballSize > canvas.width) {
+                    soccerBall.vx *= -0.9; playSound('bounce');
+                }
+
+                if (soccerBall.y + settings.ballSize > floorY) {
+                    soccerBall.y = floorY - settings.ballSize; soccerBall.vy *= -0.7;
+                    if (score > 0) playSound('whistle');
+                    score = 0; ballTrail = []; 
+                }
+            } 
+            else if (soccerBall.state === 'shooting') {
+                soccerBall.z += 0.025 * settings.gameSpeed; 
+                soccerBall.y += soccerBall.vy * settings.gameSpeed;
+                soccerBall.x += soccerBall.vx * settings.gameSpeed;
+                soccerBall.rotation += 0.15; 
+
+                if(Math.random() > 0.3) {
+                    ballTrail.push({
+                        x: soccerBall.x, y: soccerBall.y, life: 20, 
+                        scale: Math.max(0.2, 1.0 - soccerBall.z), rot: Math.random() * Math.PI
+                    });
+                }
+
+                if (soccerBall.z >= 1.0) {
+                    if (soccerBall.x > goalRect.x && soccerBall.x < goalRect.x + goalRect.width &&
+                        soccerBall.y > goalRect.y && soccerBall.y < goalRect.y + goalRect.height) {
+                        triggerGoalCelebration();
+                    } else {
+                        playSound('whistle'); 
+                    }
+                    soccerBall = createSoccerBall(); 
+                    score = 0;
+                    ballTrail = [];
+                    return;
+                }
+            }
+
+            if (ballTrail.length > 30) ballTrail.shift();
+            drawBallTrail();
+
+            var currentScale = Math.max(0.2, 1.0 - soccerBall.z);
+            drawModernSoccerBall(soccerBall.x, soccerBall.y, settings.ballSize * currentScale, soccerBall.rotation);
+        }
+
+        function drawBallTrail() {
+            ctx.save();
+            for (let i = ballTrail.length - 1; i >= 0; i--) {
+                let p = ballTrail[i];
+                p.life--;
+                if (p.life <= 0) {
+                    ballTrail.splice(i, 1);
+                } else {
+                    let alpha = p.life / 30;
+                    let size = (settings.ballSize / 6) * p.scale;
+                    
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(p.rot);
+                    ctx.fillStyle = `rgba(255, 235, 100, ${alpha})`; 
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(0, -size);
+                    ctx.quadraticCurveTo(size/4, -size/4, size, 0);
+                    ctx.quadraticCurveTo(size/4, size/4, 0, size);
+                    ctx.quadraticCurveTo(-size/4, size/4, -size, 0);
+                    ctx.quadraticCurveTo(-size/4, -size/4, 0, -size);
+                    ctx.fill();
+                    
+                    ctx.rotate(-p.rot);
+                    ctx.translate(-p.x, -p.y);
+                }
+            }
+            ctx.restore();
+        }
+
+        function drawPlayerForm() {
+            ctx.save();
+            ctx.fillStyle = settings.indicatorColor;
+            ctx.globalAlpha = 0.3; 
+            
+            playerSilhouette.forEach(p => {
+                ctx.fillRect(p.x - 4, p.y - 4, 8, 8); 
+            });
+            ctx.restore();
+
+            motionPoints.forEach(p => {
+                var grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, settings.indicatorSize);
+                grad.addColorStop(0, settings.indicatorColor + 'AA');
+                grad.addColorStop(0.8, settings.indicatorColor + '55');
+                grad.addColorStop(1, settings.indicatorColor + '00');
+                ctx.fillStyle = grad;
+                ctx.beginPath(); ctx.arc(p.x, p.y, settings.indicatorSize, 0, 2 * Math.PI); ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, 2 * Math.PI); ctx.fill();
+            });
+        }
+
+        function drawModernSoccerBall(x, y, r, rot) {
+            ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+            ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.stroke();
+            var c = ['#E41E26', '#1E90FF', '#FFD700'];
+            for (let i = 0; i < 3; i++) {
+                ctx.fillStyle = c[i]; ctx.beginPath(); ctx.arc(r * 0.6, 0, r * 0.4, -Math.PI * 0.6, Math.PI * 0.6);
+                ctx.rotate(Math.PI * 2 / 3); ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function createSoccerBall() {
+            return {
+                x: canvas.width / 2, y: canvas.height / 4,
+                vx: (Math.random() - 0.5) * 10, vy: -5, z: 0,
+                radius: settings.ballSize, rotation: 0, lastKicker: null, state: 'juggling'
+            };
+        }
+
+        function trackMotion() {
+            var mCanvas = document.createElement('canvas');
+            var mCtx = mCanvas.getContext('2d', { willReadFrequently: true });
+            mCanvas.width = 64; mCanvas.height = 48;
+
+            function scan() {
+                if (!engineBooted) { setTimeout(scan, 100); return; }
+                mCtx.drawImage(video, 0, 0, 64, 48);
+                var cur = mCtx.getImageData(0, 0, 64, 48).data;
+                
+                motionPoints = [];
+                playerSilhouette = []; 
+                
+                if (lastFrame) {
+                    let raw = [];
+                    for (let i = 0; i < cur.length; i += 8) { 
+                        if (Math.abs(cur[i] - lastFrame[i]) > 40) {
+                            var x = (1.0 - (((i / 4) % 64) / 64)) * canvas.width;
+                            var y = (Math.floor(i / 4 / 64)) / 48 * canvas.height;
+                            raw.push({ x, y });
+                        }
+                    }
+
+                    playerSilhouette = raw; 
+
+                    if (raw.length > 0) {
+                        let t = raw[0], b = raw[0], l = raw[0], r = raw[0];
+                        raw.forEach(p => {
+                            if (p.y < t.y) t = p; if (p.y > b.y) b = p;
+                            if (p.x < l.x) l = p; if (p.x > r.x) r = p;
+                        });
+                        motionPoints = [t, b, l, r];
+
+                        motionPoints.forEach(pt => {
+                            if (!soccerBall) return;
+                            var dx = soccerBall.x - pt.x;
+                            var dy = soccerBall.y - pt.y;
+                            
+                            if (Math.sqrt(dx * dx + dy * dy) < soccerBall.radius + 50) {
+                                if (soccerBall.lastKicker !== pt) {
+                                    if (soccerBall.state === 'juggling') {
+                                        if (score >= 3) {
+                                            soccerBall.state = 'shooting';
+                                            soccerBall.vy = -10; 
+                                            soccerBall.vx = (canvas.width / 2 - soccerBall.x) * 0.05; 
+                                            playSound('kick');
+                                        } else {
+                                            soccerBall.vy = -settings.kickPower * (1 - (dy / 200));
+                                            soccerBall.vx = -dx * 0.25;
+                                            score++;
+                                            if (score > highScore) highScore = score;
+                                            playSound('kick');
+                                        }
+                                    }
+                                    soccerBall.lastKicker = pt;
+                                }
+                            } else {
+                                soccerBall.lastKicker = null;
+                            }
+                        });
+                    }
+                }
+                lastFrame = new Uint8ClampedArray(cur);
+                setTimeout(scan, 50);
+            }
+            scan();
+        }
+
+        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        
+        function playSound(type) {
+            if (!audioCtx || !settings.soundEnabled) return; 
+            var o = audioCtx.createOscillator();
+            var g = audioCtx.createGain();
+            o.connect(g); g.connect(audioCtx.destination);
+            g.gain.setValueAtTime(0.2, audioCtx.currentTime);
+
+            if (type === 'kick') {
+                o.frequency.setValueAtTime(150, audioCtx.currentTime);
+                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+            } else if (type === 'whistle') {
+                o.type = 'sine'; o.frequency.setValueAtTime(1200, audioCtx.currentTime);
+                o.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.3);
+                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
+            } else if (type === 'bounce') {
+                o.frequency.setValueAtTime(80, audioCtx.currentTime);
+                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+            } else if (type === 'cheer') {
+                g.gain.setValueAtTime(0, audioCtx.currentTime);
+                g.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.2);
+                g.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1.5);
+                o = audioCtx.createBufferSource();
+                var buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 1.5, audioCtx.sampleRate);
+                var data = buf.getChannelData(0);
+                for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+                o.buffer = buf; o.connect(g);
+            }
+            o.start(); o.stop(audioCtx.currentTime + 1.5);
