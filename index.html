@@ -6,7 +6,16 @@
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
         canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
-        #webcam { transform: scaleX(-1); display: none; }
+        
+        /* FIX: Never use display: none on video, browsers will stop rendering it */
+        #webcam { 
+            transform: scaleX(-1); 
+            position: absolute; 
+            top: 0; left: 0; 
+            width: 1px; height: 1px; 
+            opacity: 0; 
+            pointer-events: none; 
+        }
         
         #ui {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -21,6 +30,11 @@
         }
         button:hover { background-color: #45a049; transform: scale(1.05); }
         
+        #error-msg {
+            color: #ff4444; font-size: 1.2em; max-width: 600px; margin-top: 20px; display: none;
+            background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border: 1px solid #ff4444;
+        }
+
         .dg.ac { z-index: 50 !important; transition: opacity 0.3s; }
         body.fullscreen .dg.ac { opacity: 0; pointer-events: none; }
     </style>
@@ -30,7 +44,8 @@
     <div id="ui">
         <h1 style="letter-spacing: 2px; font-size: 3em; font-weight: bold; margin-bottom: 10px;">WORLD CUP KEEP-UP</h1>
         <p style="color: #ddd; font-size: 1.2em; margin-bottom: 40px;">Juggle to build power, then kick it FORWARD into the net!</p>
-        <button onclick="startApp()">START GAME</button>
+        <button id="startBtn" onclick="startApp()">START GAME</button>
+        <div id="error-msg"></div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -40,6 +55,8 @@
         var video = document.getElementById('webcam');
         var canvas = document.getElementById('gameCanvas');
         var ctx = canvas.getContext('2d');
+        var errorMsg = document.getElementById('error-msg');
+        var startBtn = document.getElementById('startBtn');
 
         var soccerBall = null, motionPoints = [], playerSilhouette = [], lastFrame = null, ballTrail = [];
         var engineBooted = false, score = 0, highScore = 0;
@@ -50,43 +67,63 @@
 
         var settings = {
             gameSpeed: 1.0, kickPower: 18, ballSize: 60, gravity: 0.45,
-            floorLevel: 0.85, 
-            soundEnabled: true, 
+            floorLevel: 0.85, soundEnabled: true, 
             cameraAlpha: 0.2, cameraBlur: 3, 
-            indicatorColor: '#00FFFF', 
-            indicatorSize: 40,
+            indicatorColor: '#00FFFF', indicatorSize: 40,
         };
 
         var audioCtx;
 
-        function startApp() {
-            document.getElementById('ui').style.display = 'none';
-            initAudio();
+        function showError(msg) {
+            errorMsg.innerHTML = msg;
+            errorMsg.style.display = 'block';
+            startBtn.innerText = "TRY AGAIN";
+        }
 
-            // FIX: Start camera immediately, do not wait for the image to load
+        function startApp() {
+            errorMsg.style.display = 'none';
+            initAudio();
+            
+            // Check for file:// protocol block immediately
+            if (window.location.protocol === 'file:' && navigator.userAgent.toLowerCase().indexOf('chrome') > -1) {
+                showError("Chrome blocks cameras for local files. Please run this via a local server (like VS Code Live Server) or use Firefox/Safari.");
+                // We will still try to start the camera just in case the user disabled web security, but it likely fails.
+            }
+
             startCamera();
 
-            // Load background asynchronously
             backgroundImage.src = 'ChatGPT Image May 16, 2026, 04_06_46 AM.png';
             backgroundImage.onload = () => { backgroundLoaded = true; };
-            backgroundImage.onerror = () => { console.warn("Background image not found. Using fallback green background."); };
         }
 
         function startCamera() {
-            navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showError("Your browser does not support webcam access. Make sure you are using a secure connection (HTTPS or Localhost).");
+                return;
+            }
+
+            startBtn.innerText = "CONNECTING CAMERA...";
+
+            navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } }).then(stream => {
                 video.srcObject = stream;
-                video.play().catch(()=>{});
-                var checkInterval = setInterval(() => {
-                    if (video.videoWidth > 0 && !engineBooted) {
-                        clearInterval(checkInterval);
-                        engineBooted = true;
-                        setupGUI();
-                        startExperience();
-                    }
-                }, 100);
+                
+                // FIX: Use onloadedmetadata instead of a setInterval polling width
+                video.onloadedmetadata = () => {
+                    video.play().then(() => {
+                        if (!engineBooted) {
+                            engineBooted = true;
+                            document.getElementById('ui').style.display = 'none';
+                            setupGUI();
+                            startExperience();
+                        }
+                    }).catch(err => {
+                        showError("Browser prevented the video from playing automatically. Error: " + err);
+                    });
+                };
+
             }).catch(err => { 
                 console.error("Camera Error:", err); 
-                alert("Camera access was blocked or failed. Please check browser permissions and reload.");
+                showError("Camera Access Denied.<br><br>1. Check if another app (Zoom/Teams) is using the camera.<br>2. Look for a blocked camera icon in your browser's URL bar.<br>Error Detail: " + err.message);
             });
         }
         
@@ -433,3 +470,25 @@
                 o.buffer = buf; o.connect(g);
             }
             o.start(); o.stop(audioCtx.currentTime + 1.5);
+        }
+
+        function drawMirroredCamera() {
+            ctx.save();
+            ctx.globalAlpha = settings.cameraAlpha;
+            ctx.filter = `blur(${settings.cameraBlur}px) contrast(1.2)`;
+            ctx.scale(-1, 1); ctx.translate(-canvas.width, 0);
+            if (video.readyState >= 3) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.restore();
+        }
+
+        function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+
+        document.addEventListener('keydown', e => { 
+            if (e.key.toLowerCase() === 'f') { 
+                if (!document.fullscreenElement) document.documentElement.requestFullscreen().then(() => document.body.classList.add('fullscreen')); 
+                else document.exitFullscreen().then(() => document.body.classList.remove('fullscreen'));
+            }
+        });
+    </script>
+</body>
+</html>
