@@ -7,7 +7,6 @@
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
         canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
         
-        /* FIX: Robust hidden video element to prevent browser throttling */
         #webcam { transform: scaleX(-1); position:absolute; top:0; left:0; width:1px; height:1px; opacity:0; pointer-events: none; }
         
         #ui {
@@ -57,15 +56,16 @@
         var backgroundImage = new Image();
         var backgroundLoaded = false;
 
-        // Settings with persistence
         var defaultSettings = {
             gameSpeed: 1.0, kickPower: 16, ballSize: 60, gravity: 0.4, 
             floorLevel: 0.9, soundEnabled: true, cameraAlpha: 0.2, cameraBlur: 3, 
             indicatorColor: '#00FFFF', indicatorSize: 40,
+            funnelStrength: 0.05 // NEW: Controls how hard the ball is pushed to center
         };
         var settings = JSON.parse(localStorage.getItem('soccerGameSettings')) || { ...defaultSettings };
 
         var audioCtx;
+        var currentDifficultyMultiplier = 1.0; // Dynamic difficulty
 
         function showError(msg) {
             errorMsg.innerHTML = msg;
@@ -76,9 +76,8 @@
         function startApp() {
             errorMsg.style.display = 'none';
             initAudio();
-            startCamera(); // Launch camera immediately
+            startCamera(); 
             
-            // Load background independently
             backgroundImage.src = 'ChatGPT Image May 16, 2026, 04_06_46 AM.png';
             backgroundImage.onload = () => { backgroundLoaded = true; };
             backgroundImage.onerror = () => { console.warn("Background image not found. Using green fallback."); };
@@ -95,13 +94,12 @@
             navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } }).then(stream => {
                 video.srcObject = stream;
                 
-                // Bulletproof video initialization
                 video.onloadedmetadata = () => {
                     video.play().then(() => {
                         if (!engineBooted) {
                             engineBooted = true;
                             document.getElementById('ui').style.display = 'none';
-                            setupGUI(); // Ensure GUI is set up BEFORE experience starts
+                            setupGUI(); 
                             startExperience();
                         }
                     }).catch(err => { showError("Video playback blocked by browser: " + err); });
@@ -119,6 +117,7 @@
             gameFolder.add(settings, 'kickPower', 10, 25).name('Kick Power');
             gameFolder.add(settings, 'ballSize', 30, 100).name('Ball Size').onFinishChange(() => { if(soccerBall) soccerBall.radius = settings.ballSize; });
             gameFolder.add(settings, 'floorLevel', 0.6, 1.0).name('Floor Level');
+            gameFolder.add(settings, 'funnelStrength', 0.0, 0.2).name('Center Funnel'); // Added funnel to UI
             gameFolder.add(settings, 'soundEnabled').name('Sound ON/OFF');
             gameFolder.open();
 
@@ -149,7 +148,6 @@
         function gameLoop() {
             requestAnimationFrame(gameLoop);
             
-            // Draw Background
             if (backgroundLoaded) {
                 ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
             } else { 
@@ -166,26 +164,44 @@
 
         function updateAndDrawBall() {
             var floorY = canvas.height * settings.floorLevel;
+            var centerX = canvas.width / 2;
+
+            // --- NEW: Dynamic Difficulty ---
+            if (score < 10) currentDifficultyMultiplier = 1.0;
+            else if (score < 25) currentDifficultyMultiplier = 1.2;
+            else currentDifficultyMultiplier = 1.4;
+
+            // Apply Gravity (scaled by difficulty)
+            var currentGravity = settings.gravity * currentDifficultyMultiplier;
+            soccerBall.vy += currentGravity * settings.gameSpeed;
+
+            // --- NEW: Invisible Center Funnel ---
+            // If the ball is away from the center, gently push it back
+            var distanceFromCenter = centerX - soccerBall.x;
+            soccerBall.vx += (distanceFromCenter * settings.funnelStrength * 0.01) * settings.gameSpeed;
             
-            soccerBall.vy += settings.gravity * settings.gameSpeed;
+            // Move Ball
             soccerBall.x += soccerBall.vx * settings.gameSpeed;
             soccerBall.y += soccerBall.vy * settings.gameSpeed;
-            soccerBall.vx *= 0.99; // Less aggressive horizontal slowdown
+            
+            soccerBall.vx *= 0.98; // Slightly more friction to stop it sailing away
             soccerBall.vy *= 0.99;
             soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed;
             
-            // Wall bounces
+            // Wall bounces (Keep these just in case, but funnel should prevent hitting them)
             if (soccerBall.x - settings.ballSize < 0 || soccerBall.x + settings.ballSize > canvas.width) {
-                soccerBall.vx *= -0.8; // Softer wall bounce
+                soccerBall.vx *= -0.8; 
                 playSound('bounce');
+                // Force it back in bounds
+                soccerBall.x = soccerBall.x < canvas.width / 2 ? settings.ballSize : canvas.width - settings.ballSize;
             }
 
             // Floor bounce (Game Over)
             if (soccerBall.y + settings.ballSize > floorY) {
                 soccerBall.y = floorY - settings.ballSize;
-                soccerBall.vy *= -0.6; // Softer floor bounce
+                soccerBall.vy *= -0.6; 
                 if (score > 0) playSound('whistle');
-                score = 0; // Reset score
+                score = 0; 
             }
 
             drawModernSoccerBall(soccerBall.x, soccerBall.y, settings.ballSize, soccerBall.rotation);
@@ -219,14 +235,12 @@
                         let kickZonePoints = [];
 
                         rawMotion.forEach(p => {
-                            // Only consider motion in the lower half of the screen
                             if (p.y > canvas.height * 0.5) { 
                                 kickZonePoints.push(p);
                             }
                         });
 
                         if (kickZonePoints.length > 0) {
-                            // Find the single lowest point (the foot)
                             let lowestPt = kickZonePoints[0];
                             kickZonePoints.forEach(p => {
                                 if (p.y > lowestPt.y) lowestPt = p;
@@ -237,8 +251,11 @@
                             var dy = soccerBall.y - lowestPt.y;
                             if (Math.sqrt(dx * dx + dy * dy) < soccerBall.radius + 60) { 
                                 if (soccerBall.lastKicker !== lowestPt) {
+                                    
                                     soccerBall.vy = -settings.kickPower; 
-                                    soccerBall.vx = -dx * 0.15; 
+                                    // --- NEW: Dramatically reduce horizontal kick force ---
+                                    soccerBall.vx = -dx * 0.05; // Was 0.15. Now it mostly goes UP.
+                                    
                                     score++;
                                     if (score > highScore) highScore = score;
                                     playSound('kick');
@@ -270,6 +287,14 @@
             ctx.fillText('KICKS', 100, 62);
             ctx.fillStyle = 'white'; ctx.textAlign = 'right'; ctx.font = '20px Arial, sans-serif';
             ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width - 40, 48);
+            
+            // Draw Difficulty Indicator
+            if (score >= 10) {
+                ctx.fillStyle = score >= 25 ? '#ff4444' : '#ffeb3b';
+                ctx.font = 'bold 16px Arial';
+                ctx.fillText(score >= 25 ? 'GRAVITY: HIGH' : 'GRAVITY: MEDIUM', 140, 78);
+            }
+
             ctx.restore();
         }
 
@@ -291,14 +316,4 @@
             });
         }
         
-        function createSoccerBall() { return { x: canvas.width / 2, y: canvas.height / 4, vx: (Math.random() - 0.5) * 5, vy: -5, radius: settings.ballSize, rotation: 0, lastKicker: null }; }
-        function drawModernSoccerBall(x, y, r, rot) { ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.stroke(); var c = ['#E41E26', '#1E90FF', '#FFD700']; for (let i = 0; i < 3; i++) { ctx.fillStyle = c[i]; ctx.beginPath(); ctx.arc(r * 0.6, 0, r * 0.4, -Math.PI * 0.6, Math.PI * 0.6); ctx.rotate(Math.PI * 2 / 3); ctx.fill(); } ctx.restore(); }
-        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
-        function playSound(type) { if (!audioCtx || !settings.soundEnabled) return; var o = audioCtx.createOscillator(); var g = audioCtx.createGain(); o.connect(g); g.connect(audioCtx.destination); g.gain.setValueAtTime(0.2, audioCtx.currentTime); if (type === 'kick') { o.frequency.setValueAtTime(150, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2); } else if (type === 'whistle') { o.type = 'sine'; o.frequency.setValueAtTime(1200, audioCtx.currentTime); o.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.3); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4); } else if (type === 'bounce') { o.frequency.setValueAtTime(80, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2); } o.start(); o.stop(audioCtx.currentTime + 0.4); }
-        function drawMirroredCamera() { ctx.save(); ctx.globalAlpha = settings.cameraAlpha; ctx.filter = `blur(${settings.cameraBlur}px) contrast(1.2)`; ctx.scale(-1, 1); ctx.translate(-canvas.width, 0); if (video.readyState >= 3) ctx.drawImage(video, 0, 0, canvas.width, canvas.height); ctx.restore(); }
-        function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
-        
-        document.addEventListener('keydown', e => { if (e.key.toLowerCase() === 'f') { if (!document.fullscreenElement) document.documentElement.requestFullscreen().then(() => document.body.classList.add('fullscreen')); else document.exitFullscreen().then(() => document.body.classList.remove('fullscreen')); } });
-    </script>
-</body>
-</html>
+        function createSoccerBall() { return { x: canvas.width / 2, y: canv
