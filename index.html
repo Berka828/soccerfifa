@@ -29,7 +29,7 @@
 <body>
     <div id="ui">
         <h1 style="letter-spacing: 2px; font-size: 3em; font-weight: bold; margin-bottom: 10px;">WORLD CUP KEEP-UP</h1>
-        <p style="color: #ddd; font-size: 1.2em; margin-bottom: 40px;">Keep the ball off the ground!</p>
+        <p style="color: #ddd; font-size: 1.2em; margin-bottom: 40px;">Juggle to build power, then kick it FORWARD into the net!</p>
         <button onclick="startApp()">START GAME</button>
     </div>
 
@@ -86,7 +86,7 @@
             gameFolder.add(settings, 'gameSpeed', 0.5, 2.0).name('Game Speed');
             gameFolder.add(settings, 'kickPower', 10, 30).name('Kick Power');
             gameFolder.add(settings, 'ballSize', 30, 100).name('Ball Size').onFinishChange(() => { if(soccerBall) soccerBall.radius = settings.ballSize; });
-            gameFolder.add(settings, 'floorLevel', 0.7, 1.0).name('Floor Level');
+            gameFolder.add(settings, 'floorLevel', 0.5, 1.0).name('Floor Level');
             gameFolder.open();
 
             var playerFolder = gui.addFolder('Player & Effects');
@@ -108,59 +108,66 @@
         function gameLoop() {
             requestAnimationFrame(gameLoop);
             
-            ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
+            if (backgroundLoaded) {
+                ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
+            } else {
+                ctx.fillStyle = '#114411'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
             
             drawMirroredCamera();
             drawTouchIndicators();
+            drawGoalTarget(); // Shows when shot is ready
             
             if (soccerBall) updateAndDrawBall();
 
-            drawBroadcastUI(); // NEW Broadcast-style UI
-            drawGoalCelebration(); // NEW
+            drawBroadcastUI(); 
+            drawGoalCelebration(); 
         }
 
-        // --- NEW: FIFA Broadcast Style UI ---
+        function drawGoalTarget() {
+            // If combo is high enough, show kids where to aim!
+            if (score >= 3 && soccerBall && soccerBall.state === 'juggling') {
+                var floorY = canvas.height * settings.floorLevel;
+                var goalRect = { x: canvas.width * 0.35, y: floorY - canvas.height*0.35, width: canvas.width * 0.3, height: canvas.height*0.35 };
+                
+                ctx.save();
+                ctx.strokeStyle = `rgba(255, 215, 0, ${0.5 + Math.sin(Date.now() / 150) * 0.3})`; // Pulsing gold
+                ctx.lineWidth = 4;
+                ctx.setLineDash([15, 15]);
+                ctx.strokeRect(goalRect.x, goalRect.y, goalRect.width, goalRect.height);
+                
+                ctx.fillStyle = '#FFD700';
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 24px Arial';
+                ctx.fillText("POWER STRIKE READY!", canvas.width / 2, goalRect.y - 20);
+                ctx.restore();
+            }
+        }
+
         function drawBroadcastUI() {
             ctx.save();
-            // Score Box
             ctx.fillStyle = 'rgba(0, 20, 50, 0.8)';
-            ctx.beginPath();
-            ctx.moveTo(20, 20); ctx.lineTo(320, 20);
-            ctx.lineTo(300, 80); ctx.lineTo(20, 80);
-            ctx.closePath();
-            ctx.fill();
+            ctx.beginPath(); ctx.moveTo(20, 20); ctx.lineTo(320, 20); ctx.lineTo(300, 80); ctx.lineTo(20, 80); ctx.closePath(); ctx.fill();
             
-            // High Score Box
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.beginPath();
-            ctx.moveTo(canvas.width - 20, 20); ctx.lineTo(canvas.width - 280, 20);
-            ctx.lineTo(canvas.width - 260, 60); ctx.lineTo(canvas.width - 20, 60);
-            ctx.closePath();
-            ctx.fill();
+            ctx.beginPath(); ctx.moveTo(canvas.width - 20, 20); ctx.lineTo(canvas.width - 280, 20); ctx.lineTo(canvas.width - 260, 60); ctx.lineTo(canvas.width - 20, 60); ctx.closePath(); ctx.fill();
 
-            // Text
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 36px Arial, sans-serif';
-            ctx.textAlign = 'left';
+            ctx.fillStyle = 'white'; ctx.font = 'bold 36px Arial, sans-serif'; ctx.textAlign = 'left';
             ctx.fillText(score, 40, 65);
             
-            ctx.fillStyle = '#FFD700';
-            ctx.font = 'bold 20px Arial, sans-serif';
-            ctx.fillText('KICKS', 100, 62);
+            ctx.fillStyle = '#FFD700'; ctx.font = 'bold 20px Arial, sans-serif';
+            ctx.fillText('COMBO', 100, 62);
             
-            ctx.fillStyle = 'white';
-            ctx.textAlign = 'right';
-            ctx.font = '20px Arial, sans-serif';
+            ctx.fillStyle = 'white'; ctx.textAlign = 'right'; ctx.font = '20px Arial, sans-serif';
             ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width - 40, 48);
             ctx.restore();
         }
 
-        // --- NEW: Goal Celebration ---
         function triggerGoalCelebration() {
             goalCelebration.text = 'GOAL!';
-            goalCelebration.life = 120; // 2 seconds
+            goalCelebration.life = 120; 
             playSound('cheer');
-            score += 100; // Bonus points!
+            score += 100; // Massive bonus
             if (score > highScore) highScore = score;
         }
         
@@ -185,43 +192,62 @@
         
         function updateAndDrawBall() {
             var floorY = canvas.height * settings.floorLevel;
-            var goalRect = { x: canvas.width * 0.42, y: floorY - 200, width: canvas.width * 0.16, height: 200 };
-            
-            soccerBall.vy += settings.gravity * settings.gameSpeed;
-            soccerBall.x += soccerBall.vx * settings.gameSpeed;
-            soccerBall.y += soccerBall.vy * settings.gameSpeed;
-            soccerBall.vx *= 0.985; soccerBall.vy *= 0.985;
-            soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed;
-            
-            // Add to trail for "On Fire" effect
-            if (score > 5) {
-                ballTrail.push({x: soccerBall.x, y: soccerBall.y, life: 20 + score});
+            var goalRect = { x: canvas.width * 0.35, y: floorY - canvas.height*0.35, width: canvas.width * 0.3, height: canvas.height*0.35 };
+
+            if (soccerBall.state === 'juggling') {
+                soccerBall.vy += settings.gravity * settings.gameSpeed;
+                soccerBall.x += soccerBall.vx * settings.gameSpeed;
+                soccerBall.y += soccerBall.vy * settings.gameSpeed;
+                soccerBall.vx *= 0.985; soccerBall.vy *= 0.985;
+                soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed;
+                
+                if (score >= 3) {
+                    ballTrail.push({x: soccerBall.x, y: soccerBall.y, life: 20 + score, scale: 1});
+                }
+
+                if (soccerBall.x - settings.ballSize < 0 || soccerBall.x + settings.ballSize > canvas.width) {
+                    soccerBall.vx *= -0.9; playSound('bounce');
+                }
+
+                // Dropped the ball while juggling
+                if (soccerBall.y + settings.ballSize > floorY) {
+                    soccerBall.y = floorY - settings.ballSize; soccerBall.vy *= -0.7;
+                    if (score > 0) playSound('whistle');
+                    score = 0; ballTrail = []; 
+                }
+            } 
+            else if (soccerBall.state === 'shooting') {
+                // THE 3D SHOT MECHANIC
+                soccerBall.z += 0.025 * settings.gameSpeed; // Pushes ball into the background
+                soccerBall.y += soccerBall.vy * settings.gameSpeed;
+                soccerBall.x += soccerBall.vx * settings.gameSpeed;
+                soccerBall.rotation += 0.15; // Fast spin
+
+                ballTrail.push({x: soccerBall.x, y: soccerBall.y, life: 20, scale: Math.max(0.2, 1.0 - soccerBall.z)});
+
+                // Once ball is deep in the background, check if it hit the net
+                if (soccerBall.z >= 1.0) {
+                    if (soccerBall.x > goalRect.x && soccerBall.x < goalRect.x + goalRect.width &&
+                        soccerBall.y > goalRect.y && soccerBall.y < goalRect.y + goalRect.height) {
+                        triggerGoalCelebration();
+                    } else {
+                        playSound('whistle'); // Missed the net
+                    }
+                    soccerBall = createSoccerBall(); // Reset ball to foreground
+                    score = 0;
+                    ballTrail = [];
+                    return;
+                }
             }
+
             if (ballTrail.length > 50) ballTrail.shift();
-
-            // Wall bounces
-            if (soccerBall.x - settings.ballSize < 0 || soccerBall.x + settings.ballSize > canvas.width) {
-                soccerBall.vx *= -0.9; playSound('bounce');
-            }
-
-            // Game Over
-            if (soccerBall.y + settings.ballSize > floorY) {
-                soccerBall.y = floorY - settings.ballSize; soccerBall.vy *= -0.7;
-                if (score > 0) playSound('whistle');
-                score = 0; ballTrail = []; // Reset trail
-            }
-            
-            // NEW: Goal Detection
-            if (soccerBall.x > goalRect.x && soccerBall.x < goalRect.x + goalRect.width &&
-                soccerBall.y > goalRect.y && soccerBall.y < goalRect.y + goalRect.height && goalCelebration.life <= 0) {
-                triggerGoalCelebration();
-            }
-
             drawBallTrail();
-            drawModernSoccerBall(soccerBall.x, soccerBall.y, settings.ballSize, soccerBall.rotation);
+
+            // Scale the ball size based on Z depth
+            var currentScale = Math.max(0.2, 1.0 - soccerBall.z);
+            drawModernSoccerBall(soccerBall.x, soccerBall.y, settings.ballSize * currentScale, soccerBall.rotation);
         }
 
-        // --- NEW: On Fire Trail ---
         function drawBallTrail() {
             for (let i = ballTrail.length - 1; i >= 0; i--) {
                 let p = ballTrail[i];
@@ -229,25 +255,164 @@
                 if (p.life <= 0) {
                     ballTrail.splice(i, 1);
                 } else {
-                    let alpha = p.life / (20 + score);
+                    let alpha = p.life / 25;
                     ctx.beginPath();
-                    ctx.arc(p.x, p.y, (p.life / 20) * (settings.ballSize / 4), 0, Math.PI * 2);
+                    ctx.arc(p.x, p.y, (p.life / 20) * (settings.ballSize / 4) * (p.scale || 1), 0, Math.PI * 2);
                     ctx.fillStyle = `rgba(255, ${100 + Math.random() * 100}, 0, ${alpha * 0.5})`;
                     ctx.fill();
                 }
             }
         }
 
-        // --- Minified helper functions (with sound additions) ---
-        function drawTouchIndicators(){motionPoints.forEach(p=>{var g=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,settings.indicatorSize);g.addColorStop(0,settings.indicatorColor+'AA');g.addColorStop(0.8,settings.indicatorColor+'55');g.addColorStop(1,settings.indicatorColor+'00');ctx.fillStyle=g;ctx.beginPath();ctx.arc(p.x,p.y,settings.indicatorSize,0,2*Math.PI);ctx.fill();ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(p.x,p.y,5,0,2*Math.PI);ctx.fill();});}
-        function drawModernSoccerBall(x,y,r,rot){ctx.save();ctx.translate(x,y);ctx.rotate(rot);ctx.fillStyle='white';ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#555';ctx.lineWidth=2;ctx.stroke();var c=['#E41E26','#1E90FF','#FFD700'];for(let i=0;i<3;i++){ctx.fillStyle=c[i];ctx.beginPath();ctx.arc(r*0.6,0,r*0.4,-Math.PI*0.6,Math.PI*0.6);ctx.rotate(Math.PI*2/3);ctx.fill();}ctx.restore();}
-        function createSoccerBall(){return{x:canvas.width/2,y:canvas.height/4,vx:(Math.random()-0.5)*10,vy:-5,radius:settings.ballSize,rotation:0,lastKicker:null};}
-        function trackMotion(){var mC=document.createElement('canvas');var mCtx=mC.getContext('2d',{willReadFrequently:true});mC.width=64;mC.height=48;function scan(){if(!engineBooted){setTimeout(scan,100);return;}mCtx.drawImage(video,0,0,64,48);var cur=mCtx.getImageData(0,0,64,48).data;motionPoints=[];if(lastFrame){let raw=[];for(let i=0;i<cur.length;i+=4){if(Math.abs(cur[i]-lastFrame[i])>45){var x=(1.0-(((i/4)%64)/64))*canvas.width;var y=(Math.floor(i/4/64))/48*canvas.height;raw.push({x,y});}}if(raw.length>0){let t=raw[0],b=raw[0],l=raw[0],r=raw[0];raw.forEach(p=>{if(p.y<t.y)t=p;if(p.y>b.y)b=p;if(p.x<l.x)l=p;if(p.x>r.x)r=p;});motionPoints=[t,b,l,r];motionPoints.forEach(pt=>{if(!soccerBall)return;var dx=soccerBall.x-pt.x;var dy=soccerBall.y-pt.y;if(Math.sqrt(dx*dx+dy*dy)<soccerBall.radius+50){if(soccerBall.lastKicker!==pt){soccerBall.vy=-settings.kickPower*(1-(dy/200));soccerBall.vx=-dx*0.25;score++;if(score>highScore)highScore=score;playSound('kick');soccerBall.lastKicker=pt;}}else{soccerBall.lastKicker=null;}});}}lastFrame=new Uint8ClampedArray(cur);setTimeout(scan,50);}scan();}
-        function initAudio(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();}
-        function playSound(type){if(!audioCtx)return;var o=audioCtx.createOscillator();var g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);g.gain.setValueAtTime(0.2,audioCtx.currentTime);if(type==='kick'){o.frequency.setValueAtTime(150,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.2);}else if(type==='whistle'){o.type='sine';o.frequency.setValueAtTime(1200,audioCtx.currentTime);o.frequency.exponentialRampToValueAtTime(800,audioCtx.currentTime+0.3);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.4);}else if(type==='bounce'){o.frequency.setValueAtTime(80,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.2);}else if(type==='cheer'){g.gain.setValueAtTime(0,audioCtx.currentTime);g.gain.linearRampToValueAtTime(0.4,audioCtx.currentTime+0.2);g.gain.linearRampToValueAtTime(0,audioCtx.currentTime+1.5);o=audioCtx.createBufferSource();var buf=audioCtx.createBuffer(1,audioCtx.sampleRate*1.5,audioCtx.sampleRate);var data=buf.getChannelData(0);for(let i=0;i<data.length;i++)data[i]=Math.random()*2-1;o.buffer=buf;o.connect(g);}o.start();o.stop(audioCtx.currentTime+1.5);}
-        function drawMirroredCamera(){ctx.save();ctx.globalAlpha=settings.cameraAlpha;ctx.filter=`blur(${settings.cameraBlur}px) contrast(1.2)`;ctx.scale(-1,1);ctx.translate(-canvas.width,0);if(video.readyState>=3)ctx.drawImage(video,0,0,canvas.width,canvas.height);ctx.restore();}
-        function resizeCanvas(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;}
-        document.addEventListener('keydown',e=>{if(e.key.toLowerCase()==='f'){if(!document.fullscreenElement)document.documentElement.requestFullscreen().then(()=>document.body.classList.add('fullscreen'));else document.exitFullscreen().then(()=>document.body.classList.remove('fullscreen'));}});
+        function drawTouchIndicators() {
+            motionPoints.forEach(p => {
+                var grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, settings.indicatorSize);
+                grad.addColorStop(0, settings.indicatorColor + 'AA');
+                grad.addColorStop(0.8, settings.indicatorColor + '55');
+                grad.addColorStop(1, settings.indicatorColor + '00');
+                ctx.fillStyle = grad;
+                ctx.beginPath(); ctx.arc(p.x, p.y, settings.indicatorSize, 0, 2 * Math.PI); ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, 2 * Math.PI); ctx.fill();
+            });
+        }
+
+        function drawModernSoccerBall(x, y, r, rot) {
+            ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+            ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.stroke();
+            var c = ['#E41E26', '#1E90FF', '#FFD700'];
+            for (let i = 0; i < 3; i++) {
+                ctx.fillStyle = c[i]; ctx.beginPath(); ctx.arc(r * 0.6, 0, r * 0.4, -Math.PI * 0.6, Math.PI * 0.6);
+                ctx.rotate(Math.PI * 2 / 3); ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function createSoccerBall() {
+            return {
+                x: canvas.width / 2, y: canvas.height / 4,
+                vx: (Math.random() - 0.5) * 10, vy: -5, z: 0,
+                radius: settings.ballSize, rotation: 0, lastKicker: null, state: 'juggling'
+            };
+        }
+
+        function trackMotion() {
+            var mCanvas = document.createElement('canvas');
+            var mCtx = mCanvas.getContext('2d', { willReadFrequently: true });
+            mCanvas.width = 64; mCanvas.height = 48;
+
+            function scan() {
+                if (!engineBooted) { setTimeout(scan, 100); return; }
+                mCtx.drawImage(video, 0, 0, 64, 48);
+                var cur = mCtx.getImageData(0, 0, 64, 48).data;
+                motionPoints = [];
+                
+                if (lastFrame) {
+                    let raw = [];
+                    for (let i = 0; i < cur.length; i += 4) {
+                        if (Math.abs(cur[i] - lastFrame[i]) > 45) {
+                            var x = (1.0 - (((i / 4) % 64) / 64)) * canvas.width;
+                            var y = (Math.floor(i / 4 / 64)) / 48 * canvas.height;
+                            raw.push({ x, y });
+                        }
+                    }
+
+                    if (raw.length > 0) {
+                        let t = raw[0], b = raw[0], l = raw[0], r = raw[0];
+                        raw.forEach(p => {
+                            if (p.y < t.y) t = p; if (p.y > b.y) b = p;
+                            if (p.x < l.x) l = p; if (p.x > r.x) r = p;
+                        });
+                        motionPoints = [t, b, l, r];
+
+                        motionPoints.forEach(pt => {
+                            if (!soccerBall) return;
+                            var dx = soccerBall.x - pt.x;
+                            var dy = soccerBall.y - pt.y;
+                            
+                            // Interaction Radius
+                            if (Math.sqrt(dx * dx + dy * dy) < soccerBall.radius + 50) {
+                                if (soccerBall.lastKicker !== pt) {
+                                    if (soccerBall.state === 'juggling') {
+                                        if (score >= 3) {
+                                            // POWER STRIKE INTO BACKGROUND
+                                            soccerBall.state = 'shooting';
+                                            soccerBall.vy = -10; // Send upward arc
+                                            soccerBall.vx = (canvas.width / 2 - soccerBall.x) * 0.05; // Curve slightly towards center net
+                                            playSound('kick');
+                                        } else {
+                                            // Normal Juggle
+                                            soccerBall.vy = -settings.kickPower * (1 - (dy / 200));
+                                            soccerBall.vx = -dx * 0.25;
+                                            score++;
+                                            if (score > highScore) highScore = score;
+                                            playSound('kick');
+                                        }
+                                    }
+                                    soccerBall.lastKicker = pt;
+                                }
+                            } else {
+                                soccerBall.lastKicker = null;
+                            }
+                        });
+                    }
+                }
+                lastFrame = new Uint8ClampedArray(cur);
+                setTimeout(scan, 50);
+            }
+            scan();
+        }
+
+        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        
+        function playSound(type) {
+            if (!audioCtx) return;
+            var o = audioCtx.createOscillator();
+            var g = audioCtx.createGain();
+            o.connect(g); g.connect(audioCtx.destination);
+            g.gain.setValueAtTime(0.2, audioCtx.currentTime);
+
+            if (type === 'kick') {
+                o.frequency.setValueAtTime(150, audioCtx.currentTime);
+                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+            } else if (type === 'whistle') {
+                o.type = 'sine'; o.frequency.setValueAtTime(1200, audioCtx.currentTime);
+                o.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.3);
+                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
+            } else if (type === 'bounce') {
+                o.frequency.setValueAtTime(80, audioCtx.currentTime);
+                g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+            } else if (type === 'cheer') {
+                g.gain.setValueAtTime(0, audioCtx.currentTime);
+                g.gain.linearRampToValueAtTime(0.4, audioCtx.currentTime + 0.2);
+                g.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1.5);
+                o = audioCtx.createBufferSource();
+                var buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 1.5, audioCtx.sampleRate);
+                var data = buf.getChannelData(0);
+                for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+                o.buffer = buf; o.connect(g);
+            }
+            o.start(); o.stop(audioCtx.currentTime + 1.5);
+        }
+
+        function drawMirroredCamera() {
+            ctx.save();
+            ctx.globalAlpha = settings.cameraAlpha;
+            ctx.filter = `blur(${settings.cameraBlur}px) contrast(1.2)`;
+            ctx.scale(-1, 1); ctx.translate(-canvas.width, 0);
+            if (video.readyState >= 3) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.restore();
+        }
+
+        function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+
+        document.addEventListener('keydown', e => { 
+            if (e.key.toLowerCase() === 'f') { 
+                if (!document.fullscreenElement) document.documentElement.requestFullscreen().then(() => document.body.classList.add('fullscreen')); 
+                else document.exitFullscreen().then(() => document.body.classList.remove('fullscreen'));
+            }
+        });
     </script>
 </body>
 </html>
