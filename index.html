@@ -2,32 +2,17 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Interactive Soccer Keep-Up</title>
+    <title>Interactive Soccer Stadium</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
         canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
         #webcam { transform: scaleX(-1); display: none; }
-        
-        #ui {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            background: #2a2a2a; z-index: 100; color: #fff; text-align: center;
-        }
-        button {
-            padding: 20px 50px; font-size: 20px; cursor: pointer; letter-spacing: 1px;
-            background-color: #4CAF50; color: white; border: none; border-radius: 50px;
-            box-shadow: 0 4px 10px rgba(0,0,0, 0.3); transition: 0.3s;
-        }
-        button:hover { background-color: #45a049; transform: scale(1.05); }
+        .dg.ac { z-index: 50 !important; transition: opacity 0.3s; }
+        body.fullscreen .dg.ac { opacity: 0; pointer-events: none; }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
 </head>
 <body>
-    <div id="ui">
-        <h1 style="letter-spacing: 2px; font-weight: 300;">SOCCER KEEP-UP</h1>
-        <p style="color: #ccc; margin-bottom: 30px;">Use your hands and feet to keep the ball in the air!</p>
-        <button onclick="startApp()">START GAME</button>
-    </div>
-
     <canvas id="gameCanvas"></canvas>
     <video id="webcam" playsinline autoplay muted></video>
 
@@ -38,86 +23,218 @@
 
         var soccerBall = null;
         var motionPoints = [];
+        var grassBlades = []; // For interactive grass
         var lastFrame = null;
         var engineBooted = false;
 
-        // NEW: Game State variables
-        var score = 0;
-        var highScore = 0;
+        var score = 0, highScore = 0;
 
-        // --- GAME SETTINGS ---
+        // --- EXPANDED CUSTOMIZABLE SETTINGS ---
         var settings = {
-            gravity: 0.45,      // More realistic gravity
-            kickPower: 18,      // A much stronger kick
-            ballRadius: 60,     // A larger, more visible ball
-            airDrag: 0.98,      // A little less drag
-            cameraAlpha: 0.15,  // Keep the mirror effect subtle
-            cameraBlur: 5,
+            gameSpeed: 1.0,      // NEW: Master speed control
+            kickPower: 18,
+            ballSize: 60,        // NEW: Renamed from ballRadius for clarity
+            gravity: 0.45,
+            cameraAlpha: 0.1,
+            cameraBlur: 6,
         };
 
-        // Audio setup for sound effects
-        var audioCtx;
-        function initAudio() {
-            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if (audioCtx.state === 'suspended') audioCtx.resume();
-        }
+        var audioCtx; // (Audio functions remain the same)
 
-        function playSound(type) {
-            if (!audioCtx) return;
-            var osc = audioCtx.createOscillator();
-            var gainNode = audioCtx.createGain();
-            osc.connect(gainNode);
-            gainNode.connect(audioCtx.destination);
-            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
-
-            if (type === 'kick') {
-                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
-            } else if (type === 'whistle') {
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
-                osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.3);
-                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
-            }
-            
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.4);
-        }
-
-        function startApp() {
-            initAudio(); // Initialize audio on first user interaction
-            document.getElementById('ui').style.display = 'none';
-            
-            navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-                video.srcObject = stream;
-                video.play().catch(()=>{});
-                var checkInterval = setInterval(() => {
-                    if (video.videoWidth > 0 && !engineBooted) {
-                        clearInterval(checkInterval);
-                        engineBooted = true;
-                        initGame();
-                    }
-                }, 100);
-            }).catch(err => { console.error("Camera Error:", err); });
-        }
-
-        function initGame() {
+        function startExperience() {
+            // This function is called implicitly now once the camera is ready
             resizeCanvas();
             window.addEventListener('resize', resizeCanvas);
             
+            // Initialize the interactive grass
+            var floorY = canvas.height * 0.9;
+            for (let i = 0; i < canvas.width; i += 10) {
+                grassBlades.push({
+                    x: i,
+                    y: floorY,
+                    height: 20 + Math.random() * 15,
+                    bend: 0
+                });
+            }
+
             soccerBall = createSoccerBall();
             trackMotion();
             gameLoop();
         }
 
+        // --- NEW: Better Soccer Ball Drawing Function ---
+        function drawModernSoccerBall(x, y, radius, rotation) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(rotation);
+
+            // White base
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(0, 0, radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Colorful panels (kid-friendly)
+            var colors = ['#E41E26', '#1E90FF', '#FFD700']; // Red, Blue, Yellow
+            for (let i = 0; i < 3; i++) {
+                ctx.fillStyle = colors[i];
+                ctx.beginPath();
+                ctx.arc(radius * 0.6, 0, radius * 0.4, -Math.PI * 0.6, Math.PI * 0.6);
+                ctx.rotate(Math.PI * 2 / 3);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        // --- NEW: Stadium Background Drawing ---
+        function drawStadiumBackground() {
+            var floorY = canvas.height * 0.9;
+
+            // Night sky gradient
+            var skyGrad = ctx.createLinearGradient(0, 0, 0, floorY);
+            skyGrad.addColorStop(0, '#001030'); // Deep night blue
+            skyGrad.addColorStop(1, '#003366'); // Lighter blue near horizon
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, canvas.width, floorY);
+
+            // Stadium Lights
+            for (let i = 0; i < 5; i++) {
+                let lightX = (canvas.width / 4) * i;
+                ctx.fillStyle = 'rgba(255, 255, 220, 0.8)';
+                ctx.beginPath();
+                ctx.ellipse(lightX, -20, 150, 40, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Crowd Silhouette
+            ctx.fillStyle = 'rgba(20, 20, 30, 0.7)';
+            ctx.fillRect(0, floorY - 150, canvas.width, 150);
+
+            // Field
+            ctx.fillStyle = '#228B22'; // Lush green
+            ctx.fillRect(0, floorY, canvas.width, canvas.height - floorY);
+
+            // Field Lines
+            ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(0, floorY);
+            ctx.lineTo(canvas.width, floorY);
+            ctx.stroke();
+
+            // Center circle
+            ctx.beginPath();
+            ctx.arc(canvas.width / 2, floorY, 100, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        
+        // --- NEW: Interactive Grass Logic ---
+        function drawInteractiveGrass() {
+            var floorY = canvas.height * 0.9;
+            ctx.strokeStyle = '#3CB371';
+            ctx.lineWidth = 2;
+
+            grassBlades.forEach(blade => {
+                // Check for interaction with motion points
+                var bendAmount = 0;
+                motionPoints.forEach(pt => {
+                    let dist = Math.abs(pt.x - blade.x);
+                    if (dist < 50 && pt.y > floorY - 50) {
+                        bendAmount = (pt.x - blade.x) * 0.5;
+                    }
+                });
+                // Smoothly return to upright position
+                blade.bend += (bendAmount - blade.bend) * 0.2;
+
+                // Draw the blade
+                ctx.beginPath();
+                ctx.moveTo(blade.x, blade.y);
+                ctx.quadraticCurveTo(blade.x + blade.bend, blade.y - blade.height / 2, blade.x, blade.y - blade.height);
+                ctx.stroke();
+            });
+        }
+
+        function gameLoop() {
+            requestAnimationFrame(gameLoop);
+            
+            drawStadiumBackground(); // Draw new background
+            drawInteractiveGrass(); // Draw grass before player mirror
+            
+            drawMirroredCamera();
+            
+            if (soccerBall) {
+                updateAndDrawBall();
+            }
+
+            drawUI();
+        }
+        
+        function updateAndDrawBall() {
+            var floorY = canvas.height * 0.9;
+            
+            // Apply game speed to physics
+            soccerBall.vy += settings.gravity * settings.gameSpeed;
+            soccerBall.x += soccerBall.vx * settings.gameSpeed;
+            soccerBall.y += soccerBall.vy * settings.gameSpeed;
+
+            soccerBall.vx *= 0.98;
+            soccerBall.vy *= 0.98;
+            soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed;
+
+            if (soccerBall.x - settings.ballSize < 0 || soccerBall.x + settings.ballSize > canvas.width) {
+                soccerBall.vx *= -0.9;
+            }
+
+            if (soccerBall.y + settings.ballSize > floorY) {
+                soccerBall.y = floorY - settings.ballSize;
+                soccerBall.vy *= -0.7;
+                if (score > 0) playSound('whistle');
+                score = 0;
+            }
+
+            drawModernSoccerBall(soccerBall.x, soccerBall.y, settings.ballSize, soccerBall.rotation);
+        }
+
+        // --- Main App Flow & Other Functions (with minor adjustments) ---
+
+        // Auto-start when DOM is ready
+        document.addEventListener('DOMContentLoaded', () => {
+             navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+                video.srcObject = stream;
+                video.play().catch(()=>{});
+                var checkInterval = setInterval(() => {
+                    if (video.videoWidth > 0 && !engineBooted) {
+                        clearInterval(checkInterval);
+                        initAudio(); // Init audio on first real frame
+                        engineBooted = true;
+                        startExperience();
+                    }
+                }, 100);
+            }).catch(err => { console.error("Camera Error:", err); });
+
+            // Initialize dat.GUI
+            var gui = new dat.GUI();
+            var gameFolder = gui.addFolder('Game Settings');
+            gameFolder.add(settings, 'gameSpeed', 0.5, 2.0).name('Game Speed');
+            gameFolder.add(settings, 'kickPower', 10, 30).name('Kick Power');
+            gameFolder.add(settings, 'ballSize', 30, 100).name('Ball Size').onFinishChange(() => {
+                if(soccerBall) soccerBall.radius = settings.ballSize;
+            });
+            gameFolder.open();
+
+            var cameraFolder = gui.addFolder('Camera Mirror');
+            cameraFolder.add(settings, 'cameraAlpha', 0.0, 0.5).name('Visibility');
+            cameraFolder.add(settings, 'cameraBlur', 0, 20).name('Blur');
+        });
+
         function createSoccerBall() {
             return {
-                x: canvas.width / 2,
-                y: canvas.height / 2,
+                x: canvas.width / 2, y: canvas.height / 2,
                 vx: (Math.random() - 0.5) * 10, vy: -5,
-                radius: settings.ballRadius,
-                rotation: 0,
-                lastKicker: null // Prevents multiple score increases from one motion
+                radius: settings.ballSize, rotation: 0, lastKicker: null
             };
         }
 
@@ -127,18 +244,18 @@
             mCanvas.width = 64; mCanvas.height = 48;
 
             function scan() {
-                if (video.readyState < 3) { setTimeout(scan, 100); return; }
+                if (!engineBooted) { setTimeout(scan, 100); return; }
                 mCtx.drawImage(video, 0, 0, 64, 48);
                 var current = mCtx.getImageData(0, 0, 64, 48).data;
                 motionPoints = [];
                 
                 if (lastFrame) {
                     let rawMotion = [];
-                    for (var i = 0; i < current.length; i += 4) {
-                        if (Math.abs(current[i] - lastFrame[i]) > 50) { // Slightly higher threshold
+                    for (let i = 0; i < current.length; i += 4) {
+                        if (Math.abs(current[i] - lastFrame[i]) > 45) {
                             var x = (1.0 - (((i/4) % 64) / 64)) * canvas.width;
                             var y = (Math.floor(i/4/64))/48 * canvas.height;
-                            rawMotion.push({ x: x, y: y });
+                            rawMotion.push({ x, y });
                         }
                     }
 
@@ -148,14 +265,15 @@
                             if (p.y < topPt.y) topPt = p; if (p.y > bottomPt.y) bottomPt = p;
                             if (p.x < leftPt.x) leftPt = p; if (p.x > rightPt.x) rightPt = p;
                         });
-                        motionPoints.push(topPt, bottomPt, leftPt, rightPt);
+                        motionPoints = [topPt, bottomPt, leftPt, rightPt];
 
                         motionPoints.forEach(pt => {
+                            if (!soccerBall) return;
                             var dx = soccerBall.x - pt.x;
                             var dy = soccerBall.y - pt.y;
                             if (Math.sqrt(dx*dx + dy*dy) < soccerBall.radius + 40) {
                                 if (soccerBall.lastKicker !== pt) {
-                                    soccerBall.vy = -settings.kickPower * (1 - (dy / 200)); // Kick higher if you're under it
+                                    soccerBall.vy = -settings.kickPower * (1 - (dy / 200));
                                     soccerBall.vx = -dx * 0.2;
                                     score++;
                                     if (score > highScore) highScore = score;
@@ -169,123 +287,10 @@
                     }
                 }
                 lastFrame = new Uint8ClampedArray(current);
-                setTimeout(scan, 50); // Scan more frequently
+                setTimeout(scan, 50);
             }
             scan();
         }
 
-        function gameLoop() {
-            requestAnimationFrame(gameLoop);
-            
-            drawBackground();
-            drawMirroredCamera();
-            
-            if (soccerBall) {
-                updateAndDrawBall();
-            }
-
-            drawUI();
-        }
-
-        function drawBackground() {
-            var floorY = canvas.height - 80;
-            // Sky
-            ctx.fillStyle = '#87CEEB';
-            ctx.fillRect(0, 0, canvas.width, floorY);
-            // Field
-            ctx.fillStyle = '#4CAF50';
-            ctx.fillRect(0, floorY, canvas.width, 80);
-            ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            ctx.moveTo(0, floorY);
-            ctx.lineTo(canvas.width, floorY);
-            ctx.stroke();
-            // Goal
-            var goalWidth = canvas.width * 0.3;
-            var goalHeight = goalWidth * 0.5;
-            ctx.strokeRect((canvas.width/2) - (goalWidth/2), floorY - goalHeight, goalWidth, goalHeight);
-        }
-
-        function drawMirroredCamera() {
-            ctx.save();
-            ctx.globalAlpha = settings.cameraAlpha;
-            ctx.filter = `blur(${settings.cameraBlur}px)`;
-            ctx.scale(-1, 1);
-            ctx.translate(-canvas.width, 0);
-            if (video.readyState >= 3) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            ctx.restore();
-        }
-
-        function updateAndDrawBall() {
-            var floorY = canvas.height - 80;
-            
-            soccerBall.vy += settings.gravity;
-            soccerBall.x += soccerBall.vx;
-            soccerBall.y += soccerBall.vy;
-
-            soccerBall.vx *= settings.airDrag;
-            soccerBall.vy *= settings.airDrag;
-            soccerBall.rotation += soccerBall.vx * 0.02;
-
-            // Wall bounces
-            if (soccerBall.x - soccerBall.radius < 0 || soccerBall.x + soccerBall.radius > canvas.width) {
-                soccerBall.vx *= -0.9;
-            }
-
-            // Floor bounce (Game Over!)
-            if (soccerBall.y + soccerBall.radius > floorY) {
-                soccerBall.y = floorY - soccerBall.radius;
-                soccerBall.vy *= -0.7; // Bounce
-                if (score > 0) {
-                   playSound('whistle');
-                }
-                score = 0; // Reset score
-            }
-
-            // Drawing the ball
-            ctx.save();
-            ctx.translate(soccerBall.x, soccerBall.y);
-            ctx.rotate(soccerBall.rotation);
-            // Classic soccer ball pattern
-            ctx.fillStyle = 'white';
-            ctx.beginPath();
-            ctx.arc(0, 0, soccerBall.radius, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = 'black';
-            for (let i = 0; i < 6; i++) {
-                ctx.save();
-                ctx.rotate(i * Math.PI / 3);
-                ctx.beginPath();
-                ctx.rect(-soccerBall.radius * 0.2, -soccerBall.radius, soccerBall.radius * 0.4, soccerBall.radius * 0.8);
-                ctx.fill();
-                ctx.restore();
-            }
-            ctx.restore();
-        }
-        
-        function drawUI() {
-            ctx.fillStyle = 'white';
-            ctx.textAlign = 'center';
-            ctx.font = 'bold 50px sans-serif';
-            ctx.strokeStyle = 'black';
-            ctx.lineWidth = 4;
-            
-            // Current Score
-            ctx.strokeText(`KICKS: ${score}`, canvas.width / 2, 80);
-            ctx.fillText(`KICKS: ${score}`, canvas.width / 2, 80);
-
-            // High Score
-            ctx.textAlign = 'right';
-            ctx.font = 'bold 30px sans-serif';
-            ctx.strokeText(`HIGH SCORE: ${highScore}`, canvas.width - 30, 60);
-            ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width - 30, 60);
-        }
-
-        function resizeCanvas() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-        }
-    </script>
-</body>
-</html>
+        // Unchanged Helper Functions
+        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
