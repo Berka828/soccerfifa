@@ -7,7 +7,6 @@
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
         canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
         
-        /* The camera must be on screen but invisible for browsers to keep processing it */
         #webcam { position: absolute; top: 0; left: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
         
         #ui {
@@ -56,17 +55,16 @@
         let score = 0;
         let highScore = 0;
         
-        // Background Image Setup
         let bgImage = new Image();
         let bgLoaded = false;
         bgImage.src = 'ChatGPT Image May 16, 2026, 04_06_46 AM.png';
         bgImage.onload = () => { bgLoaded = true; };
 
-        // Settings & Persistence
         const defaultSettings = {
             gameSpeed: 1.0, kickPower: 16, ballSize: 60, gravity: 0.4, 
             floorLevel: 0.9, soundEnabled: true, cameraAlpha: 0.3, cameraBlur: 3, 
-            indicatorColor: '#00FFFF', indicatorSize: 40, funnelStrength: 0.05
+            indicatorColor: '#00FFFF', indicatorSize: 40, funnelStrength: 0.05,
+            waistHeight: 0.45 // NEW: Configurable waistline height
         };
         let settings = JSON.parse(localStorage.getItem('soccerGameSettings')) || { ...defaultSettings };
         let audioCtx;
@@ -114,11 +112,12 @@
             gameFolder.add(settings, 'soundEnabled').name('Sound ON/OFF');
             gameFolder.open();
 
-            const playerFolder = gui.addFolder('Player & Effects');
-            playerFolder.add(settings, 'cameraAlpha', 0.0, 1.0).name('Player Visibility');
-            playerFolder.add(settings, 'cameraBlur', 0, 10).name('Player Blur');
-            playerFolder.addColor(settings, 'indicatorColor').name('Form Color');
-            playerFolder.add(settings, 'indicatorSize', 10, 80).name('Extremity Size');
+            const playerFolder = gui.addFolder('Player Sensors');
+            playerFolder.add(settings, 'cameraAlpha', 0.0, 1.0).name('Video Visibility');
+            playerFolder.add(settings, 'cameraBlur', 0, 10).name('Video Blur');
+            playerFolder.add(settings, 'waistHeight', 0.1, 0.9).name('Waistline Level'); // So you can adjust if sitting
+            playerFolder.addColor(settings, 'indicatorColor').name('Sensor Color');
+            playerFolder.add(settings, 'indicatorSize', 10, 80).name('Sensor Size');
             playerFolder.open();
             
             const saveFolder = gui.addFolder('Save & Reset');
@@ -129,7 +128,8 @@
         function startExperience() {
             resizeCanvas();
             window.addEventListener('resize', resizeCanvas);
-            soccerBall = { x: canvas.width/2, y: canvas.height/4, vx: 0, vy: 0, radius: settings.ballSize, rotation: 0 };
+            // Added kickCooldown to prevent multiple hits in one frame
+            soccerBall = { x: canvas.width/2, y: canvas.height/4, vx: 0, vy: -5, radius: settings.ballSize, rotation: 0, kickCooldown: 0 };
             trackMotion();
             gameLoop();
         }
@@ -142,21 +142,36 @@
         function gameLoop() {
             requestAnimationFrame(gameLoop);
             
-            // 1. Draw Background
             if (bgLoaded) {
                 ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
             } else {
-                ctx.fillStyle = '#114411'; 
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#114411'; ctx.fillRect(0, 0, canvas.width, canvas.height);
             }
             
-            // 2. Draw Player & Camera
             drawMirroredCamera();
+            drawKickZone(); // Visual guide for where the sensor starts
             drawPlayerForm();
             
-            // 3. Draw Ball & UI
             updateAndDrawBall();
             drawUI();
+        }
+
+        function drawKickZone() {
+            let waistY = canvas.height * settings.waistHeight;
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(0, waistY);
+            ctx.lineTo(canvas.width, waistY);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([10, 10]);
+            ctx.stroke();
+            
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.font = '14px Arial';
+            ctx.textAlign = 'right';
+            ctx.fillText("Active Kick Zone Below", canvas.width - 20, waistY + 20);
+            ctx.restore();
         }
 
         function drawMirroredCamera() {
@@ -173,7 +188,6 @@
             ctx.save();
             ctx.fillStyle = settings.indicatorColor;
             
-            // Energy Silhouette
             for (let i = 0; i < playerSilhouette.length; i++) {
                 if (Math.random() > 0.4) {
                     ctx.globalAlpha = Math.random() * 0.5;
@@ -182,7 +196,6 @@
             }
             ctx.restore();
 
-            // Glowing Touch Points (Feet)
             for (let i = 0; i < motionPoints.length; i++) {
                 let p = motionPoints[i];
                 let grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, settings.indicatorSize);
@@ -198,37 +211,30 @@
         function updateAndDrawBall() {
             if (!soccerBall) return;
             
+            // Decrease cooldown timer
+            if (soccerBall.kickCooldown > 0) soccerBall.kickCooldown--;
+
             let floorY = canvas.height * settings.floorLevel;
-            
-            // Difficulty increases slightly at 10 and 25 kicks
             let difficultyMultiplier = score < 10 ? 1.0 : (score < 25 ? 1.2 : 1.4);
             
-            // Apply Gravity
             soccerBall.vy += settings.gravity * difficultyMultiplier * settings.gameSpeed;
             
-            // The Invisible Center Funnel (Gently pushes ball to the middle of the screen)
             let distanceToCenter = (canvas.width / 2) - soccerBall.x;
             soccerBall.vx += distanceToCenter * settings.funnelStrength * 0.01 * settings.gameSpeed;
             
-            // Move Ball
             soccerBall.x += soccerBall.vx * settings.gameSpeed;
             soccerBall.y += soccerBall.vy * settings.gameSpeed;
             
-            // Friction
             soccerBall.vx *= 0.98;
             soccerBall.vy *= 0.99;
-            
-            // Rotation
             soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed; 
 
-            // Wall bounce
             if (soccerBall.x - soccerBall.radius < 0 || soccerBall.x + soccerBall.radius > canvas.width) {
                 soccerBall.vx *= -0.8;
                 soccerBall.x = Math.max(soccerBall.radius, Math.min(canvas.width - soccerBall.radius, soccerBall.x));
                 playSound('bounce');
             }
 
-            // Floor drop (Game Over)
             if (soccerBall.y + soccerBall.radius > floorY) {
                 soccerBall.y = floorY - soccerBall.radius;
                 soccerBall.vy *= -0.6;
@@ -236,7 +242,6 @@
                 score = 0;
             }
 
-            // Draw the actual ball graphic
             ctx.save();
             ctx.translate(soccerBall.x, soccerBall.y);
             ctx.rotate(soccerBall.rotation);
@@ -245,7 +250,7 @@
             ctx.beginPath(); ctx.arc(0, 0, soccerBall.radius, 0, 2*Math.PI); ctx.fill();
             ctx.strokeStyle = '#333'; ctx.lineWidth = 2; ctx.stroke();
             
-            const colors = ['#E41E26', '#1E90FF', '#FFD700']; // Primary Colors
+            const colors = ['#E41E26', '#1E90FF', '#FFD700'];
             for (let i = 0; i < 3; i++) {
                 ctx.fillStyle = colors[i];
                 ctx.beginPath();
@@ -257,19 +262,16 @@
         }
 
         function drawUI() {
-            // Score background blocks
             ctx.fillStyle = 'rgba(0, 20, 50, 0.8)';
             ctx.fillRect(20, 20, 280, 60);
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             ctx.fillRect(canvas.width - 280, 20, 260, 40);
 
-            // Left side text (Score)
             ctx.fillStyle = 'white'; ctx.font = 'bold 36px Arial'; ctx.textAlign = 'left';
             ctx.fillText(score, 40, 65);
             ctx.fillStyle = '#FFD700'; ctx.font = 'bold 20px Arial';
             ctx.fillText('KICKS', 100, 62);
             
-            // Right side text (High Score)
             ctx.fillStyle = 'white'; ctx.textAlign = 'right'; ctx.font = '20px Arial';
             ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width - 40, 48);
         }
@@ -313,9 +315,9 @@
                 
                 if (lastFrame) {
                     let rawMotion = [];
-                    for (let i = 0; i < cur.length; i += 8) {
+                    // Using i+=4 captures EVERY pixel data point for better precision
+                    for (let i = 0; i < cur.length; i += 4) {
                         if (Math.abs(cur[i] - lastFrame[i]) > 40) {
-                            // Calculate position and correctly mirror X coordinate
                             let px = (i / 4) % 64;
                             let py = Math.floor((i / 4) / 64);
                             let x = (1.0 - (px / 64)) * canvas.width;
@@ -325,29 +327,36 @@
                     }
                     playerSilhouette = rawMotion;
 
-                    // WAIST DOWN LOGIC: Only count motion below 45% of the screen height
-                    let kickZone = rawMotion.filter(p => p.y > canvas.height * 0.45);
+                    // WAIST DOWN LOGIC
+                    let waistY = canvas.height * settings.waistHeight;
+                    let kickZone = rawMotion.filter(p => p.y > waistY);
                     
                     if (kickZone.length > 0) {
-                        // Find the lowest physical point (the foot)
-                        let lowestPt = kickZone.reduce((max, p) => p.y > max.y ? p : max, kickZone[0]);
-                        motionPoints = [lowestPt];
+                        // Find the highest-reaching kick point in the lower zone
+                        let activeFoot = kickZone[0];
+                        for (let j=0; j<kickZone.length; j++){
+                           // Instead of lowest physical point on screen, grab the HIGHEST motion point in the kick zone
+                           // (this represents a foot swinging upward)
+                           if(kickZone[j].y < activeFoot.y) activeFoot = kickZone[j];
+                        }
+                        
+                        motionPoints = [activeFoot];
 
-                        // Collision checking
-                        if (soccerBall) {
-                            let dx = soccerBall.x - lowestPt.x;
-                            let dy = soccerBall.y - lowestPt.y;
+                        // ROBUST COLLISION
+                        if (soccerBall && soccerBall.kickCooldown <= 0) {
+                            let dx = soccerBall.x - activeFoot.x;
+                            let dy = soccerBall.y - activeFoot.y;
                             
-                            // If foot touches the ball radius
-                            if (Math.sqrt(dx*dx + dy*dy) < soccerBall.radius + 60) {
-                                // Only allow a new kick if the ball is falling downward
-                                if (soccerBall.vy > 0) { 
-                                    soccerBall.vy = -settings.kickPower;
-                                    soccerBall.vx = dx * 0.1; // Gentle directional bump
-                                    score++;
-                                    if (score > highScore) highScore = score;
-                                    playSound('kick');
-                                }
+                            // Hit detection (increased radius slightly to make it more forgiving)
+                            if (Math.sqrt(dx*dx + dy*dy) < soccerBall.radius + 80) {
+                                soccerBall.vy = -settings.kickPower;
+                                soccerBall.vx = dx * 0.15; // Gentle directional push
+                                score++;
+                                if (score > highScore) highScore = score;
+                                playSound('kick');
+                                
+                                // Prevent double-kicking in a single frame
+                                soccerBall.kickCooldown = 15; // Wait ~15 frames before allowing another hit
                             }
                         }
                     }
