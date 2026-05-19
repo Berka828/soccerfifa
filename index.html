@@ -1,172 +1,400 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>AI Keep-Up Challenge</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI World Cup Keep-Up</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
         canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
-        #webcam { transform: scaleX(-1); display: none; }
-        #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0, 10, 30, 0.95); z-index: 100; color: #fff; text-align: center; }
-        button { padding: 20px 50px; font-size: 24px; cursor: pointer; letter-spacing: 2px; background: linear-gradient(145deg, #5cb85c, #4cae4c); color: white; border: none; border-radius: 50px; box-shadow: 0 5px 15px rgba(0,0,0, 0.6); transition: all 0.3s ease; font-weight: bold; }
-        button:hover { background: linear-gradient(145deg, #62c362, #57b957); transform: scale(1.05); }
-        #error-msg { color: #ff6b6b; font-size: 1.2em; max-width: 600px; margin-top: 20px; display: none; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border: 1px solid #ff6b6b; }
+        
+        /* The camera feed must exist on the page to work, but we hide it visually */
+        #webcam { position: absolute; top: 0; left: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+        
+        /* Start Screen UI */
+        #ui {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background: rgba(0, 15, 30, 0.95); z-index: 100; color: #fff; text-align: center;
+        }
+        
+        h1 { letter-spacing: 3px; font-size: 4em; font-weight: 900; margin-bottom: 10px; text-shadow: 0 0 20px rgba(255,255,255,0.5); }
+        p { color: #ddd; font-size: 1.4em; margin-bottom: 40px; max-width: 600px; line-height: 1.5; }
+        
+        button {
+            padding: 20px 60px; font-size: 24px; cursor: pointer; letter-spacing: 2px;
+            background: linear-gradient(145deg, #4CAF50, #2E7D32); color: white;
+            border: none; border-radius: 50px; box-shadow: 0 5px 15px rgba(0,0,0, 0.5);
+            transition: all 0.3s ease; font-weight: bold;
+        }
+        button:hover { transform: scale(1.05); box-shadow: 0 8px 25px rgba(0,0,0, 0.7); }
+        button:disabled { background: #555; cursor: not-allowed; transform: none; box-shadow: none; }
+        
+        #status-msg { margin-top: 20px; font-size: 1.2em; color: #FFD700; height: 30px; }
         .dg.ac { z-index: 50 !important; }
     </style>
-    <!-- AI Body Tracking Library -->
-    <script type="module" src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js"></script>
+
+    <!-- AI Body Tracking Library (Google MediaPipe) -->
+    <script type="module">
+        import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
+        window.PoseLandmarker = PoseLandmarker;
+        window.FilesetResolver = FilesetResolver;
+    </script>
+    <!-- Settings Menu Library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
 </head>
 <body>
     <div id="ui">
-        <h1 style="letter-spacing: 3px; font-size: 4em; font-weight: 900; margin-bottom: 10px; text-shadow: 0 0 20px #fff;">AI KEEP-UP</h1>
-        <p style="color: #ddd; font-size: 1.4em; margin-bottom: 50px;">True feet-and-knees-only tracking!</p>
-        <button id="startBtn" onclick="startApp()">START</button>
-        <div id="error-msg"></div>
+        <h1>AI KEEP-UP</h1>
+        <p>Step back so the camera can see your whole body.<br>Use <strong>only your knees and feet</strong> to juggle the ball!</p>
+        <button id="startBtn" onclick="initGame()">START GAME</button>
+        <div id="status-msg"></div>
     </div>
+
     <canvas id="gameCanvas"></canvas>
     <video id="webcam" playsinline autoplay muted></video>
-    <script type="module">
-        import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
 
+    <script>
         const video = document.getElementById('webcam');
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        const errorMsg = document.getElementById('error-msg');
+        const statusMsg = document.getElementById('status-msg');
         const startBtn = document.getElementById('startBtn');
-        
-        let soccerBall = null, motionPoints = [], score = 0, highScore = 0;
-        let bgImage = new Image(), bgLoaded = false;
-        bgImage.crossOrigin = "anonymous"; // Needed for loading from a URL
-        bgImage.src = 'https://i.imgur.com/8N3hVce.jpeg'; // Direct link to the image
-        bgImage.onload = () => { bgLoaded = true; };
-        
-        let poseLandmarker;
+
+        // Game State
+        let soccerBall = null;
+        let score = 0, highScore = 0;
         let lastVideoTime = -1;
-        let engineBooted = false;
-        let audioCtx;
+        let activeKickPoints = [];
         
-        const defaultSettings = { gameSpeed: 1.0, kickPower: 15, ballSize: 60, gravity: 0.4, floorLevel: 0.9, soundEnabled: true, indicatorColor: '#00FFFF', indicatorSize: 50, funnelStrength: 0.05, showKickSensors: true };
-        let settings = JSON.parse(localStorage.getItem('soccerGameSettings')) || { ...defaultSettings };
+        // Systems
+        let poseLandmarker = null;
+        let audioCtx = null;
+        
+        // Background Image Handling
+        let bgImage = new Image();
+        let bgLoaded = false;
+        bgImage.src = 'background.png'; // Make sure this file is in your GitHub repo!
+        bgImage.onload = () => { bgLoaded = true; };
 
-        function showError(msg) {
-            document.getElementById('ui').style.display = 'flex';
-            errorMsg.innerHTML = msg;
-            errorMsg.style.display = 'block';
-            startBtn.innerText = "TRY AGAIN";
+        // Customizable Settings
+        const settings = {
+            gameSpeed: 1.0,
+            kickPower: 22,
+            ballSize: 60,
+            gravity: 0.5,
+            floorLevel: 0.9,
+            cameraVisibility: 0.35,
+            soundEnabled: true,
+            showSensors: true,
+            sensorColor: '#00FFFF'
+        };
+
+        function updateStatus(msg, isError = false) {
+            statusMsg.style.color = isError ? '#ff4444' : '#FFD700';
+            statusMsg.innerText = msg;
         }
 
-        async function startApp() {
-            document.getElementById('ui').style.display = 'flex';
-            startBtn.innerText = "LOADING AI MODEL...";
-            initAudio();
+        // --- STEP 1: INITIALIZATION ---
+        async function initGame() {
+            startBtn.disabled = true;
+            
+            // 1. Initialize Audio (Must happen on user click)
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            // 2. Request Camera Permission
+            updateStatus("Requesting camera access...");
             try {
-                await initializeAIModel();
-                startCamera();
-            } catch (error) {
-                console.error("AI Model Failed to Load:", error);
-                showError("Could not load the AI Body Tracking model. Please check your internet connection and ensure you are not on a restrictive network (like a school or corporate firewall).");
-            }
-        }
-
-        async function initializeAIModel() {
-            const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
-            poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-                baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`, delegate: "GPU" },
-                runningMode: "VIDEO", numPoses: 1
-            });
-            startBtn.innerText = "STARTING CAMERA...";
-        }
-
-        function startCamera() {
-            navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } }).then(stream => {
-                video.srcObject = stream;
-                video.addEventListener('loadeddata', () => {
-                    if (!engineBooted) {
-                        engineBooted = true;
-                        document.getElementById('ui').style.display = 'none';
-                        setupGUI();
-                        startExperience();
-                    }
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 640, height: 480, facingMode: "user" } 
                 });
-            }).catch(err => showError("Camera Error: " + err.name + ". Please allow camera permissions."));
-        }
+                video.srcObject = stream;
+                await new Promise((resolve) => {
+                    video.onloadedmetadata = () => { video.play(); resolve(); };
+                });
+            } catch (err) {
+                updateStatus("Camera error. Please allow permissions.", true);
+                startBtn.disabled = false;
+                return;
+            }
 
-        function setupGUI() {
-            const gui = new dat.GUI();
-            const gameFolder = gui.addFolder('Game Settings');
-            gameFolder.add(settings, 'kickPower', 10, 25).name('Kick Power');
-            gameFolder.add(settings, 'ballSize', 30, 100).name('Ball Size').onChange(v => { if(soccerBall) soccerBall.radius = v; });
-            gameFolder.add(settings, 'floorLevel', 0.5, 1.0).name('Floor Level');
-            gameFolder.add(settings, 'soundEnabled').name('Sound ON/OFF');
-            gameFolder.open();
-            const playerFolder = gui.addFolder('Player Sensors');
-            playerFolder.add(settings, 'showKickSensors').name('Show Kick Sensors');
-            playerFolder.addColor(settings, 'indicatorColor').name('Sensor Color');
-            playerFolder.add(settings, 'indicatorSize', 10, 80).name('Sensor Size');
-            playerFolder.open();
-            const saveFolder = gui.addFolder('Save & Reset');
-            saveFolder.add({ save: () => { localStorage.setItem('soccerGameSettings', JSON.stringify(settings)); alert('Settings Saved!'); } }, 'save').name('Save Settings');
-            saveFolder.add({ reset: () => { localStorage.removeItem('soccerGameSettings'); window.location.reload(); } }, 'reset').name('Reset Defaults');
-        }
+            // 3. Load the AI Model
+            updateStatus("Loading AI Tracking Model... (This takes a moment)");
+            try {
+                const vision = await window.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
+                poseLandmarker = await window.PoseLandmarker.createFromOptions(vision, {
+                    baseOptions: { 
+                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`, 
+                        delegate: "GPU" 
+                    },
+                    runningMode: "VIDEO",
+                    numPoses: 1
+                });
+            } catch (err) {
+                updateStatus("Failed to load AI. Please check internet connection.", true);
+                startBtn.disabled = false;
+                return;
+            }
 
-        function startExperience() {
+            // 4. Start the Experience
+            document.getElementById('ui').style.display = 'none';
+            setupAdminMenu();
             resizeCanvas();
             window.addEventListener('resize', resizeCanvas);
-            soccerBall = { x: canvas.width/2, y: canvas.height/4, vx: 0, vy: 0, radius: settings.ballSize, rotation: 0, kickCooldown: 0 };
-            gameLoop();
-        }
-
-        function gameLoop() {
-            if (bgLoaded) { ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height); } 
-            else { ctx.fillStyle = '#114411'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
             
-            if (engineBooted && poseLandmarker && video.readyState >= 2) {
-                let startTimeMs = performance.now();
-                if (video.currentTime !== lastVideoTime) {
-                    poseLandmarker.detectForVideo(video, startTimeMs, (result) => { processLandmarks(result.landmarks); });
-                    lastVideoTime = video.currentTime;
-                }
-            }
-            drawPlayerForm();
-            updateAndDrawBall();
-            drawUI();
+            // Spawn the ball
+            soccerBall = { 
+                x: canvas.width / 2, y: canvas.height / 4, 
+                vx: 0, vy: 0, radius: settings.ballSize, rotation: 0, cooldown: 0 
+            };
+            
+            // Start rendering loop
             requestAnimationFrame(gameLoop);
         }
 
-        function processLandmarks(landmarks) {
-            motionPoints = [];
-            if (!landmarks || landmarks.length === 0) return;
-            const w = canvas.width; const h = canvas.height;
-            const KICK_POINTS = [ landmarks[0][25], landmarks[0][26], landmarks[0][27], landmarks[0][28], landmarks[0][31], landmarks[0][32] ];
+        function setupAdminMenu() {
+            if (typeof dat === 'undefined') return; // Skip if library didn't load
+            const gui = new dat.GUI();
+            gui.add(settings, 'gameSpeed', 0.5, 2.0).name('Game Speed');
+            gui.add(settings, 'kickPower', 15, 40).name('Kick Power');
+            gui.add(settings, 'ballSize', 30, 100).name('Ball Size').onChange(v => { if(soccerBall) soccerBall.radius = v; });
+            gui.add(settings, 'gravity', 0.2, 1.0).name('Gravity');
+            gui.add(settings, 'cameraVisibility', 0.0, 1.0).name('Camera Opacity');
+            gui.add(settings, 'showSensors').name('Show AI Sensors');
+            gui.addColor(settings, 'sensorColor').name('Sensor Color');
+            gui.add(settings, 'soundEnabled').name('Sound ON/OFF');
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        // --- STEP 2: GAME LOOP ---
+        function gameLoop() {
+            // 1. Run AI Tracking
+            if (poseLandmarker && video.readyState >= 2) {
+                let startTimeMs = performance.now();
+                if (video.currentTime !== lastVideoTime) {
+                    poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
+                        processAILandmarks(result.landmarks);
+                    });
+                    lastVideoTime = video.currentTime;
+                }
+            }
+
+            // 2. Draw Environment
+            if (bgLoaded) {
+                ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
+            } else {
+                drawFallbackBackground();
+            }
+
+            // 3. Draw Camera Overlay & Sensors
+            drawMirroredCamera();
+            if (settings.showSensors) drawAISensors();
+
+            // 4. Update and Draw Game Objects
+            updateAndDrawBall();
+            drawScoreboard();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // --- STEP 3: AI LOGIC (FEET & KNEES ONLY) ---
+        function processAILandmarks(landmarks) {
+            activeKickPoints = [];
             
-            KICK_POINTS.forEach(landmark => {
-                if (landmark && landmark.visibility > 0.3) {
-                    const point = { x: (1 - landmark.x) * w, y: landmark.y * h };
-                    motionPoints.push(point);
-                    if (soccerBall && soccerBall.kickCooldown <= 0) {
-                        let dx = soccerBall.x - point.x; let dy = soccerBall.y - point.y;
-                        if (Math.sqrt(dx * dx + dy * dy) < soccerBall.radius + settings.indicatorSize) {
-                            soccerBall.vy = -settings.kickPower;
-                            soccerBall.vx += -dx * 0.08;
-                            score++;
-                            if (score > highScore) highScore = score;
-                            playSound('kick');
-                            soccerBall.kickCooldown = 10;
-                        }
+            if (landmarks && landmarks.length > 0) {
+                // MediaPipe Pose Indices: 
+                // 25: L Knee, 26: R Knee, 27: L Ankle, 28: R Ankle, 31: L Foot, 32: R Foot
+                const allowedIndices = [25, 26, 27, 28, 31, 32];
+                
+                allowedIndices.forEach(index => {
+                    const mark = landmarks[0][index];
+                    // Only use points the AI is highly confident it can see
+                    if (mark && mark.visibility > 0.6) {
+                        // Convert normalized coordinates (0 to 1) to canvas pixels
+                        // Note: X is inverted (1 - x) because we mirror the camera horizontally
+                        activeKickPoints.push({
+                            x: (1 - mark.x) * canvas.width,
+                            y: mark.y * canvas.height
+                        });
+                    }
+                });
+
+                checkBallCollision();
+            }
+        }
+
+        function checkBallCollision() {
+            if (!soccerBall || soccerBall.cooldown > 0) return;
+
+            for (let i = 0; i < activeKickPoints.length; i++) {
+                let pt = activeKickPoints[i];
+                let dx = soccerBall.x - pt.x;
+                let dy = soccerBall.y - pt.y;
+                let distance = Math.sqrt(dx * dx + dy * dy);
+
+                // If a valid foot/knee point intersects the ball's radius (+ padding)
+                if (distance < soccerBall.radius + 40) {
+                    
+                    // Only allow a kick if the ball is falling downward or barely moving up
+                    if (soccerBall.vy > -5) {
+                        // Apply vertical kick power
+                        soccerBall.vy = -settings.kickPower;
+                        
+                        // Apply slight horizontal nudge away from the foot to keep it centered
+                        soccerBall.vx += (dx > 0 ? 1 : -1) * 3;
+                        
+                        score++;
+                        if (score > highScore) highScore = score;
+                        playSound('kick');
+                        
+                        // Set cooldown so a single swing doesn't trigger 5 kicks instantly
+                        soccerBall.cooldown = 15;
+                        break; // Exit loop after hitting one point
                     }
                 }
-            });
+            }
         }
-        
-        // --- All other functions are unchanged and un-minified for clarity ---
-        function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
-        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
-        function drawPlayerForm() { if (settings.showKickSensors) { for (let i = 0; i < motionPoints.length; i++) { let p = motionPoints[i]; let grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, settings.indicatorSize); grad.addColorStop(0, '#FFFFFF'); grad.addColorStop(1, settings.indicatorColor + '00'); ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(p.x, p.y, settings.indicatorSize, 0, 2 * Math.PI); ctx.fill(); } } }
-        function updateAndDrawBall() { if (!soccerBall) return; if (soccerBall.kickCooldown > 0) soccerBall.kickCooldown--; let floorY = canvas.height * settings.floorLevel; let difficultyMultiplier = score < 10 ? 1.0 : (score < 25 ? 1.2 : 1.4); soccerBall.vy += settings.gravity * difficultyMultiplier * settings.gameSpeed; let distanceToCenter = (canvas.width / 2) - soccerBall.x; soccerBall.vx += distanceToCenter * settings.funnelStrength * 0.01 * settings.gameSpeed; soccerBall.x += soccerBall.vx * settings.gameSpeed; soccerBall.y += soccerBall.vy * settings.gameSpeed; soccerBall.vx *= 0.98; soccerBall.vy *= 0.99; soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed; if (soccerBall.x - soccerBall.radius < 0 || soccerBall.x + soccerBall.radius > canvas.width) { soccerBall.vx *= -0.8; soccerBall.x = Math.max(soccerBall.radius, Math.min(canvas.width - soccerBall.radius, soccerBall.x)); playSound('bounce'); } if (soccerBall.y + soccerBall.radius > floorY) { soccerBall.y = floorY - soccerBall.radius; soccerBall.vy *= -0.6; if (score > 0) playSound('whistle'); if (score > highScore) highScore = score; score = 0; } ctx.save(); ctx.translate(soccerBall.x, soccerBall.y); ctx.rotate(soccerBall.rotation); ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(0, 0, soccerBall.radius, 0, 2 * Math.PI); ctx.fill(); ctx.strokeStyle = '#333'; ctx.lineWidth = 2; ctx.stroke(); const colors = ['#E41E26', '#1E90FF', '#FFD700']; for (let i = 0; i < 3; i++) { ctx.fillStyle = colors[i]; ctx.beginPath(); ctx.arc(soccerBall.radius * 0.6, 0, soccerBall.radius * 0.4, -Math.PI * 0.6, Math.PI * 0.6); ctx.rotate(Math.PI * 2 / 3); ctx.fill(); } ctx.restore(); }
-        function drawUI() { ctx.fillStyle = 'rgba(0, 20, 50, 0.8)'; ctx.fillRect(20, 20, 280, 60); ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; ctx.fillRect(canvas.width - 280, 20, 260, 40); ctx.fillStyle = 'white'; ctx.font = 'bold 36px Arial'; ctx.textAlign = 'left'; ctx.fillText(score, 40, 65); ctx.fillStyle = '#FFD700'; ctx.font = 'bold 20px Arial'; ctx.fillText('KICKS', 100, 62); ctx.fillStyle = 'white'; ctx.textAlign = 'right'; ctx.font = '20px Arial'; ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width - 40, 48); }
-        function playSound(type) { if (!audioCtx || !settings.soundEnabled) return; let o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.connect(g); g.connect(audioCtx.destination); if (type === 'kick') { o.frequency.setValueAtTime(150, audioCtx.currentTime); g.gain.setValueAtTime(0.3, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2); o.start(); o.stop(audioCtx.currentTime + 0.2); } else if (type === 'whistle') { o.type = 'sine'; o.frequency.setValueAtTime(1200, audioCtx.currentTime); o.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.3); g.gain.setValueAtTime(0.2, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4); o.start(); o.stop(audioCtx.currentTime + 0.4); } else if (type === 'bounce') { o.frequency.setValueAtTime(80, audioCtx.currentTime); g.gain.setValueAtTime(0.2, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2); o.start(); o.stop(audioCtx.currentTime + 0.2); } }
-        document.addEventListener('keydown', e => { if (e.key.toLowerCase() === 'f') { if (!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); }});
+
+        // --- STEP 4: PHYSICS & RENDERING ---
+        function updateAndDrawBall() {
+            if (soccerBall.cooldown > 0) soccerBall.cooldown--;
+            
+            let floorY = canvas.height * settings.floorLevel;
+            
+            // Physics
+            soccerBall.vy += settings.gravity * settings.gameSpeed;
+            
+            // Gentle invisible funnel pushing ball toward center screen
+            let centerPull = (canvas.width / 2) - soccerBall.x;
+            soccerBall.vx += centerPull * 0.005 * settings.gameSpeed;
+
+            soccerBall.x += soccerBall.vx * settings.gameSpeed;
+            soccerBall.y += soccerBall.vy * settings.gameSpeed;
+            
+            // Friction/Drag
+            soccerBall.vx *= 0.98;
+            soccerBall.vy *= 0.99;
+            soccerBall.rotation += soccerBall.vx * 0.03;
+
+            // Wall bounces
+            if (soccerBall.x - soccerBall.radius < 0 || soccerBall.x + soccerBall.radius > canvas.width) {
+                soccerBall.vx *= -0.8;
+                soccerBall.x = Math.max(soccerBall.radius, Math.min(canvas.width - soccerBall.radius, soccerBall.x));
+                playSound('bounce');
+            }
+
+            // Floor drop (Game Over)
+            if (soccerBall.y + soccerBall.radius > floorY) {
+                soccerBall.y = floorY - soccerBall.radius;
+                soccerBall.vy *= -0.6;
+                if (score > 0) playSound('whistle');
+                score = 0;
+            }
+
+            // Draw Ball
+            ctx.save();
+            ctx.translate(soccerBall.x, soccerBall.y);
+            ctx.rotate(soccerBall.rotation);
+            
+            // Base white
+            ctx.fillStyle = 'white';
+            ctx.beginPath(); ctx.arc(0, 0, soccerBall.radius, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = '#333'; ctx.lineWidth = 3; ctx.stroke();
+            
+            // Hexagon Pattern (simplified modern look)
+            const colors = ['#E41E26', '#1E90FF', '#333333'];
+            for (let i = 0; i < 3; i++) {
+                ctx.fillStyle = colors[i];
+                ctx.beginPath();
+                ctx.arc(soccerBall.radius * 0.5, 0, soccerBall.radius * 0.4, -Math.PI * 0.6, Math.PI * 0.6);
+                ctx.rotate((Math.PI * 2) / 3);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function drawMirroredCamera() {
+            ctx.save();
+            ctx.globalAlpha = settings.cameraVisibility;
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.restore();
+        }
+
+        function drawAISensors() {
+            ctx.save();
+            activeKickPoints.forEach(p => {
+                // Draw glowing aura around tracked feet/knees
+                let grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 50);
+                grad.addColorStop(0, '#FFFFFF');
+                grad.addColorStop(0.3, settings.sensorColor + 'AA');
+                grad.addColorStop(1, settings.sensorColor + '00');
+                
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 50, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.restore();
+        }
+
+        function drawScoreboard() {
+            ctx.fillStyle = 'rgba(0, 20, 50, 0.85)';
+            ctx.fillRect(20, 20, 250, 80);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+            ctx.fillRect(canvas.width - 270, 20, 250, 50);
+
+            ctx.fillStyle = 'white'; ctx.font = 'bold 48px Arial'; ctx.textAlign = 'left';
+            ctx.fillText(score, 40, 75);
+            ctx.fillStyle = '#FFD700'; ctx.font = 'bold 20px Arial';
+            ctx.fillText('KICKS', 110, 72);
+            
+            ctx.fillStyle = 'white'; ctx.textAlign = 'right'; ctx.font = '22px Arial';
+            ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width - 40, 52);
+        }
+
+        function drawFallbackBackground() {
+            let floorY = canvas.height * settings.floorLevel;
+            // Sky
+            let skyGrad = ctx.createLinearGradient(0, 0, 0, floorY);
+            skyGrad.addColorStop(0, '#001030'); skyGrad.addColorStop(1, '#004488');
+            ctx.fillStyle = skyGrad; ctx.fillRect(0, 0, canvas.width, floorY);
+            // Grass
+            ctx.fillStyle = '#1b5e20'; ctx.fillRect(0, floorY, canvas.width, canvas.height - floorY);
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 4;
+            ctx.beginPath(); ctx.moveTo(0, floorY); ctx.lineTo(canvas.width, floorY); ctx.stroke();
+        }
+
+        function playSound(type) {
+            if (!audioCtx || !settings.soundEnabled) return;
+            let osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            
+            if (type === 'kick') {
+                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.2);
+            } else if (type === 'whistle') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.3);
+                gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.4);
+            } else if (type === 'bounce') {
+                osc.frequency.setValueAtTime(80, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.2);
+            }
+        }
     </script>
 </body>
 </html>
