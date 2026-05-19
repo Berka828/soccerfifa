@@ -6,13 +6,14 @@
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
         canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
-        #webcam { transform: scaleX(-1); display: none; } /* The library handles the feed, so this can be hidden */
+        #webcam { transform: scaleX(-1); display: none; }
         #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0, 10, 30, 0.95); z-index: 100; color: #fff; text-align: center; }
         button { padding: 20px 50px; font-size: 24px; cursor: pointer; letter-spacing: 2px; background: linear-gradient(145deg, #5cb85c, #4cae4c); color: white; border: none; border-radius: 50px; box-shadow: 0 5px 15px rgba(0,0,0, 0.6); transition: all 0.3s ease; font-weight: bold; }
         button:hover { background: linear-gradient(145deg, #62c362, #57b957); transform: scale(1.05); }
+        #error-msg { color: #ff6b6b; font-size: 1.2em; max-width: 600px; margin-top: 20px; display: none; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border: 1px solid #ff6b6b; }
         .dg.ac { z-index: 50 !important; }
     </style>
-    <!-- NEW: MediaPipe AI Body Tracking Library -->
+    <!-- AI Body Tracking Library -->
     <script type="module" src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
 </head>
@@ -21,6 +22,7 @@
         <h1 style="letter-spacing: 3px; font-size: 4em; font-weight: 900; margin-bottom: 10px; text-shadow: 0 0 20px #fff;">AI KEEP-UP</h1>
         <p style="color: #ddd; font-size: 1.4em; margin-bottom: 50px;">True feet-and-knees-only tracking!</p>
         <button id="startBtn" onclick="startApp()">START</button>
+        <div id="error-msg"></div>
     </div>
     <canvas id="gameCanvas"></canvas>
     <video id="webcam" playsinline autoplay muted></video>
@@ -30,10 +32,13 @@
         const video = document.getElementById('webcam');
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
+        const errorMsg = document.getElementById('error-msg');
+        const startBtn = document.getElementById('startBtn');
         
         let soccerBall = null, motionPoints = [], score = 0, highScore = 0;
         let bgImage = new Image(), bgLoaded = false;
-        bgImage.src = 'ChatGPT Image May 16, 2026, 04_06_46 AM.png';
+        bgImage.crossOrigin = "anonymous"; // Needed for loading from a URL
+        bgImage.src = 'https://i.imgur.com/8N3hVce.jpeg'; // Direct link to the image
         bgImage.onload = () => { bgLoaded = true; };
         
         let poseLandmarker;
@@ -44,20 +49,33 @@
         const defaultSettings = { gameSpeed: 1.0, kickPower: 15, ballSize: 60, gravity: 0.4, floorLevel: 0.9, soundEnabled: true, indicatorColor: '#00FFFF', indicatorSize: 50, funnelStrength: 0.05, showKickSensors: true };
         let settings = JSON.parse(localStorage.getItem('soccerGameSettings')) || { ...defaultSettings };
 
-        function startApp() {
-            document.getElementById('ui').style.display = 'none';
+        function showError(msg) {
+            document.getElementById('ui').style.display = 'flex';
+            errorMsg.innerHTML = msg;
+            errorMsg.style.display = 'block';
+            startBtn.innerText = "TRY AGAIN";
+        }
+
+        async function startApp() {
+            document.getElementById('ui').style.display = 'flex';
+            startBtn.innerText = "LOADING AI MODEL...";
             initAudio();
-            initializeAIModel();
+            try {
+                await initializeAIModel();
+                startCamera();
+            } catch (error) {
+                console.error("AI Model Failed to Load:", error);
+                showError("Could not load the AI Body Tracking model. Please check your internet connection and ensure you are not on a restrictive network (like a school or corporate firewall).");
+            }
         }
 
         async function initializeAIModel() {
             const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
             poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
                 baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`, delegate: "GPU" },
-                runningMode: "VIDEO",
-                numPoses: 1 // Track one person for best performance
+                runningMode: "VIDEO", numPoses: 1
             });
-            startCamera();
+            startBtn.innerText = "STARTING CAMERA...";
         }
 
         function startCamera() {
@@ -66,30 +84,27 @@
                 video.addEventListener('loadeddata', () => {
                     if (!engineBooted) {
                         engineBooted = true;
+                        document.getElementById('ui').style.display = 'none';
                         setupGUI();
                         startExperience();
                     }
                 });
-            }).catch(err => alert("Camera Error: " + err.name));
+            }).catch(err => showError("Camera Error: " + err.name + ". Please allow camera permissions."));
         }
 
         function setupGUI() {
             const gui = new dat.GUI();
             const gameFolder = gui.addFolder('Game Settings');
-            gameFolder.add(settings, 'gameSpeed', 0.5, 2.0).name('Game Speed');
             gameFolder.add(settings, 'kickPower', 10, 25).name('Kick Power');
             gameFolder.add(settings, 'ballSize', 30, 100).name('Ball Size').onChange(v => { if(soccerBall) soccerBall.radius = v; });
             gameFolder.add(settings, 'floorLevel', 0.5, 1.0).name('Floor Level');
-            gameFolder.add(settings, 'funnelStrength', 0.0, 0.2).name('Center Funnel');
             gameFolder.add(settings, 'soundEnabled').name('Sound ON/OFF');
             gameFolder.open();
-
             const playerFolder = gui.addFolder('Player Sensors');
             playerFolder.add(settings, 'showKickSensors').name('Show Kick Sensors');
             playerFolder.addColor(settings, 'indicatorColor').name('Sensor Color');
             playerFolder.add(settings, 'indicatorSize', 10, 80).name('Sensor Size');
             playerFolder.open();
-            
             const saveFolder = gui.addFolder('Save & Reset');
             saveFolder.add({ save: () => { localStorage.setItem('soccerGameSettings', JSON.stringify(settings)); alert('Settings Saved!'); } }, 'save').name('Save Settings');
             saveFolder.add({ reset: () => { localStorage.removeItem('soccerGameSettings'); window.location.reload(); } }, 'reset').name('Reset Defaults');
@@ -106,67 +121,47 @@
             if (bgLoaded) { ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height); } 
             else { ctx.fillStyle = '#114411'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
             
-            if (engineBooted && poseLandmarker) {
+            if (engineBooted && poseLandmarker && video.readyState >= 2) {
                 let startTimeMs = performance.now();
                 if (video.currentTime !== lastVideoTime) {
-                    poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
-                        processLandmarks(result.landmarks);
-                    });
+                    poseLandmarker.detectForVideo(video, startTimeMs, (result) => { processLandmarks(result.landmarks); });
                     lastVideoTime = video.currentTime;
                 }
             }
-
             drawPlayerForm();
             updateAndDrawBall();
             drawUI();
-
             requestAnimationFrame(gameLoop);
         }
 
         function processLandmarks(landmarks) {
             motionPoints = [];
-            if (landmarks && landmarks.length > 0) {
-                const w = canvas.width;
-                const h = canvas.height;
-
-                // --- THIS IS THE AI-POWERED FIX ---
-                // We grab the specific landmarks for knees and ankles.
-                const KICK_POINTS = [
-                    landmarks[0][25], // Left Knee
-                    landmarks[0][26], // Right Knee
-                    landmarks[0][27], // Left Ankle
-                    landmarks[0][28], // Right Ankle
-                    landmarks[0][31], // Left Foot
-                    landmarks[0][32]  // Right Foot
-                ];
-                
-                KICK_POINTS.forEach(landmark => {
-                    if (landmark && landmark.visibility > 0.3) { // Only use visible points
-                        const point = { x: (1 - landmark.x) * w, y: landmark.y * h };
-                        motionPoints.push(point);
-
-                        if (soccerBall && soccerBall.kickCooldown <= 0) {
-                            let dx = soccerBall.x - point.x;
-                            let dy = soccerBall.y - point.y;
-                            
-                            if (Math.sqrt(dx * dx + dy * dy) < soccerBall.radius + settings.indicatorSize) {
-                                soccerBall.vy = -settings.kickPower;
-                                soccerBall.vx += -dx * 0.08;
-                                score++;
-                                if (score > highScore) highScore = score;
-                                playSound('kick');
-                                soccerBall.kickCooldown = 10;
-                            }
+            if (!landmarks || landmarks.length === 0) return;
+            const w = canvas.width; const h = canvas.height;
+            const KICK_POINTS = [ landmarks[0][25], landmarks[0][26], landmarks[0][27], landmarks[0][28], landmarks[0][31], landmarks[0][32] ];
+            
+            KICK_POINTS.forEach(landmark => {
+                if (landmark && landmark.visibility > 0.3) {
+                    const point = { x: (1 - landmark.x) * w, y: landmark.y * h };
+                    motionPoints.push(point);
+                    if (soccerBall && soccerBall.kickCooldown <= 0) {
+                        let dx = soccerBall.x - point.x; let dy = soccerBall.y - point.y;
+                        if (Math.sqrt(dx * dx + dy * dy) < soccerBall.radius + settings.indicatorSize) {
+                            soccerBall.vy = -settings.kickPower;
+                            soccerBall.vx += -dx * 0.08;
+                            score++;
+                            if (score > highScore) highScore = score;
+                            playSound('kick');
+                            soccerBall.kickCooldown = 10;
                         }
                     }
-                });
-            }
+                }
+            });
         }
         
-        // --- All other functions are unchanged ---
+        // --- All other functions are unchanged and un-minified for clarity ---
         function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
         function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
-        function drawMirroredCamera() { ctx.save(); ctx.globalAlpha = settings.cameraAlpha; ctx.filter = `blur(${settings.cameraBlur}px) contrast(1.2)`; ctx.translate(canvas.width, 0); ctx.scale(-1, 1); ctx.drawImage(video, 0, 0, canvas.width, canvas.height); ctx.restore(); }
         function drawPlayerForm() { if (settings.showKickSensors) { for (let i = 0; i < motionPoints.length; i++) { let p = motionPoints[i]; let grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, settings.indicatorSize); grad.addColorStop(0, '#FFFFFF'); grad.addColorStop(1, settings.indicatorColor + '00'); ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(p.x, p.y, settings.indicatorSize, 0, 2 * Math.PI); ctx.fill(); } } }
         function updateAndDrawBall() { if (!soccerBall) return; if (soccerBall.kickCooldown > 0) soccerBall.kickCooldown--; let floorY = canvas.height * settings.floorLevel; let difficultyMultiplier = score < 10 ? 1.0 : (score < 25 ? 1.2 : 1.4); soccerBall.vy += settings.gravity * difficultyMultiplier * settings.gameSpeed; let distanceToCenter = (canvas.width / 2) - soccerBall.x; soccerBall.vx += distanceToCenter * settings.funnelStrength * 0.01 * settings.gameSpeed; soccerBall.x += soccerBall.vx * settings.gameSpeed; soccerBall.y += soccerBall.vy * settings.gameSpeed; soccerBall.vx *= 0.98; soccerBall.vy *= 0.99; soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed; if (soccerBall.x - soccerBall.radius < 0 || soccerBall.x + soccerBall.radius > canvas.width) { soccerBall.vx *= -0.8; soccerBall.x = Math.max(soccerBall.radius, Math.min(canvas.width - soccerBall.radius, soccerBall.x)); playSound('bounce'); } if (soccerBall.y + soccerBall.radius > floorY) { soccerBall.y = floorY - soccerBall.radius; soccerBall.vy *= -0.6; if (score > 0) playSound('whistle'); if (score > highScore) highScore = score; score = 0; } ctx.save(); ctx.translate(soccerBall.x, soccerBall.y); ctx.rotate(soccerBall.rotation); ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(0, 0, soccerBall.radius, 0, 2 * Math.PI); ctx.fill(); ctx.strokeStyle = '#333'; ctx.lineWidth = 2; ctx.stroke(); const colors = ['#E41E26', '#1E90FF', '#FFD700']; for (let i = 0; i < 3; i++) { ctx.fillStyle = colors[i]; ctx.beginPath(); ctx.arc(soccerBall.radius * 0.6, 0, soccerBall.radius * 0.4, -Math.PI * 0.6, Math.PI * 0.6); ctx.rotate(Math.PI * 2 / 3); ctx.fill(); } ctx.restore(); }
         function drawUI() { ctx.fillStyle = 'rgba(0, 20, 50, 0.8)'; ctx.fillRect(20, 20, 280, 60); ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; ctx.fillRect(canvas.width - 280, 20, 260, 40); ctx.fillStyle = 'white'; ctx.font = 'bold 36px Arial'; ctx.textAlign = 'left'; ctx.fillText(score, 40, 65); ctx.fillStyle = '#FFD700'; ctx.font = 'bold 20px Arial'; ctx.fillText('KICKS', 100, 62); ctx.fillStyle = 'white'; ctx.textAlign = 'right'; ctx.font = '20px Arial'; ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width - 40, 48); }
