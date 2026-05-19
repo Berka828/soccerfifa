@@ -2,25 +2,23 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>World Cup Keep-Up Challenge</title>
+    <title>Ultimate Keep-Up Challenge</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
         canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
         #webcam { position: absolute; top: 0; left: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-        #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0, 16, 48, 0.9); z-index: 100; color: #fff; text-align: center; }
-        button { padding: 20px 50px; font-size: 24px; cursor: pointer; letter-spacing: 1px; background-color: #4CAF50; color: white; border: none; border-radius: 50px; box-shadow: 0 4px 10px rgba(0,0,0, 0.5); transition: 0.3s; font-weight: bold; }
-        button:hover { background-color: #45a049; transform: scale(1.05); }
-        #error-msg { color: #ff4444; font-size: 1.2em; max-width: 600px; margin-top: 20px; display: none; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border: 1px solid #ff4444; }
+        #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0, 10, 30, 0.95); z-index: 100; color: #fff; text-align: center; }
+        button { padding: 20px 50px; font-size: 24px; cursor: pointer; letter-spacing: 2px; background: linear-gradient(145deg, #5cb85c, #4cae4c); color: white; border: none; border-radius: 50px; box-shadow: 0 5px 15px rgba(0,0,0, 0.6); transition: all 0.3s ease; font-weight: bold; }
+        button:hover { background: linear-gradient(145deg, #62c362, #57b957); transform: scale(1.05); box-shadow: 0 8px 25px rgba(0,0,0, 0.7); }
         .dg.ac { z-index: 50 !important; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
 </head>
 <body>
     <div id="ui">
-        <h1 style="letter-spacing: 2px; font-size: 3em; font-weight: bold; margin-bottom: 10px;">KEEP-UP CHALLENGE</h1>
-        <p style="color: #ddd; font-size: 1.2em; margin-bottom: 40px;">Use only your legs and feet to keep the ball in the air!</p>
-        <button id="startBtn" onclick="startApp()">START GAME</button>
-        <div id="error-msg"></div>
+        <h1 style="letter-spacing: 3px; font-size: 4em; font-weight: 900; margin-bottom: 10px; text-shadow: 0 0 20px #fff;">ULTIMATE KEEP-UP</h1>
+        <p style="color: #ddd; font-size: 1.4em; margin-bottom: 50px;">A true feet-only challenge!</p>
+        <button id="startBtn" onclick="startApp()">START</button>
     </div>
     <canvas id="gameCanvas"></canvas>
     <video id="webcam" playsinline autoplay muted></video>
@@ -28,7 +26,6 @@
         const video = document.getElementById('webcam');
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        const errorMsg = document.getElementById('error-msg');
         const startBtn = document.getElementById('startBtn');
 
         let soccerBall = null, motionPoints = [], playerSilhouette = [], lastFrame = null;
@@ -40,20 +37,17 @@
         bgImage.onload = () => { bgLoaded = true; };
 
         const defaultSettings = {
-            gameSpeed: 1.0, kickPower: 16, ballSize: 60, gravity: 0.4, 
+            gameSpeed: 1.0, kickPower: 15, ballSize: 60, gravity: 0.4, 
             floorLevel: 0.9, soundEnabled: true, cameraAlpha: 0.3, cameraBlur: 3, 
-            indicatorColor: '#00FFFF', indicatorSize: 40, funnelStrength: 0.05,
-            waistHeight: 0.5 // Mid-screen is the default waistline
+            indicatorColor: '#00FFFF', indicatorSize: 50, funnelStrength: 0.05
         };
         let settings = JSON.parse(localStorage.getItem('soccerGameSettings')) || { ...defaultSettings };
         let audioCtx;
 
-        function showError(msg) { errorMsg.innerHTML = msg; errorMsg.style.display = 'block'; startBtn.innerText = "TRY AGAIN"; }
         function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
 
         function startApp() {
-            errorMsg.style.display = 'none';
-            startBtn.innerText = "CONNECTING CAMERA...";
+            document.getElementById('ui').style.display = 'none';
             initAudio();
             
             navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
@@ -63,13 +57,12 @@
                     video.play().then(() => {
                         if (!engineBooted) {
                             engineBooted = true;
-                            document.getElementById('ui').style.display = 'none';
                             setupGUI();
                             startExperience();
                         }
-                    }).catch(err => showError("Video playback failed."));
+                    }).catch(err => alert("Video playback failed."));
                 };
-            }).catch(err => showError("Camera Error: " + err.message));
+            }).catch(err => alert("Camera Error: " + err.message));
         }
 
         function setupGUI() {
@@ -86,7 +79,6 @@
             const playerFolder = gui.addFolder('Player Sensors');
             playerFolder.add(settings, 'cameraAlpha', 0.0, 1.0).name('Player Visibility');
             playerFolder.add(settings, 'cameraBlur', 0, 10).name('Player Blur');
-            playerFolder.add(settings, 'waistHeight', 0.1, 0.9).name('Waistline Level');
             playerFolder.addColor(settings, 'indicatorColor').name('Sensor Color');
             playerFolder.add(settings, 'indicatorSize', 10, 80).name('Sensor Size');
             playerFolder.open();
@@ -110,23 +102,11 @@
             requestAnimationFrame(gameLoop);
             if (bgLoaded) { ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height); } 
             else { ctx.fillStyle = '#114411'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+            
             drawMirroredCamera();
-            drawKickZone();
             drawPlayerForm();
             updateAndDrawBall();
             drawUI();
-        }
-
-        function drawKickZone() {
-            let waistY = canvas.height * settings.waistHeight;
-            ctx.save();
-            ctx.beginPath(); ctx.moveTo(0, waistY); ctx.lineTo(canvas.width, waistY);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)'; ctx.lineWidth = 2;
-            ctx.setLineDash([10, 10]); ctx.stroke();
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; ctx.font = '14px Arial';
-            ctx.textAlign = 'right';
-            ctx.fillText("Active Kick Zone Below", canvas.width - 20, waistY - 10);
-            ctx.restore();
         }
 
         function drawMirroredCamera() {
@@ -178,6 +158,7 @@
                 soccerBall.y = floorY - soccerBall.radius;
                 soccerBall.vy *= -0.6;
                 if (score > 0) playSound('whistle');
+                if (score > highScore) highScore = score;
                 score = 0;
             }
             ctx.save(); ctx.translate(soccerBall.x, soccerBall.y); ctx.rotate(soccerBall.rotation);
@@ -245,7 +226,7 @@
                 if (lastFrame) {
                     let rawMotion = [];
                     for (let i = 0; i < cur.length; i += 4) {
-                        if (Math.abs(cur[i] - lastFrame[i]) > 40) {
+                        if (Math.abs(cur[i] - lastFrame[i]) > 35) { // Lowered sensitivity
                             let px = (i / 4) % 64;
                             let py = Math.floor((i / 4) / 64);
                             let x = (1.0 - (px / 64)) * canvas.width;
@@ -255,27 +236,26 @@
                     }
                     playerSilhouette = rawMotion;
 
-                    // This is the definitive waist-down check.
-                    let waistY = canvas.height * settings.waistHeight;
-                    let kickZoneMotions = rawMotion.filter(p => p.y > waistY);
-                    
-                    if (kickZoneMotions.length > 0) {
-                        // Find the highest point WITHIN the kick zone (the top of a kicking foot)
-                        let activeKickPoint = kickZoneMotions.reduce((prev, curr) => (curr.y < prev.y ? curr : prev));
-                        motionPoints = [activeKickPoint]; // For visual feedback
-
-                        // Now, and only now, check for collision
+                    //--- DEFINITIVE LOWEST POINT LOGIC ---
+                    if (rawMotion.length > 0) {
+                        // Find the single lowest point of all motion on the screen.
+                        let lowestPt = rawMotion.reduce((prev, curr) => (curr.y > prev.y ? curr : prev));
+                        
+                        // This is the ONLY active kick point.
+                        motionPoints = [lowestPt]; 
+                        
                         if (soccerBall && soccerBall.kickCooldown <= 0) {
-                            let dx = soccerBall.x - activeKickPoint.x;
-                            let dy = soccerBall.y - activeKickPoint.y;
+                            let dx = soccerBall.x - lowestPt.x;
+                            let dy = soccerBall.y - lowestPt.y;
                             
                             if (Math.sqrt(dx * dx + dy * dy) < soccerBall.radius + settings.indicatorSize) {
                                 soccerBall.vy = -settings.kickPower;
-                                soccerBall.vx = -dx * 0.1;
+                                // De-explosive horizontal kick
+                                soccerBall.vx += -dx * 0.05; 
                                 score++;
                                 if (score > highScore) highScore = score;
                                 playSound('kick');
-                                soccerBall.kickCooldown = 10; // 10-frame delay to prevent double hits
+                                soccerBall.kickCooldown = 10;
                             }
                         }
                     }
