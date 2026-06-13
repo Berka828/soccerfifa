@@ -42,7 +42,6 @@
         
         let bgImage = new Image();
         let bgLoaded = false;
-        // Restored EXACT original background image link format
         bgImage.src = 'ChatGPT Image May 16, 2026, 04_06_46 AM.png'; 
         bgImage.onload = () => { bgLoaded = true; };
 
@@ -50,7 +49,7 @@
             gameSpeed: 1.0, kickPower: 16, ballSize: 60, gravity: 0.4, 
             floorLevel: 0.9, soundEnabled: true, cameraAlpha: 0.3, cameraBlur: 3, 
             indicatorColor: '#00FFFF', indicatorSize: 40, funnelStrength: 0.05,
-            waistHeight: 0.5, detectionConfidence: 0.5
+            waistHeight: 0.5, detectionConfidence: 0.4 // Sightly lower global default for better fast-motion capture
         };
         let settings = JSON.parse(localStorage.getItem('soccerGameSettings')) || { ...defaultSettings };
         let audioCtx;
@@ -64,7 +63,6 @@
             loadingStatus.innerText = "Starting AI tracking engine...";
             initAudio();
             
-            // Setup MediaPipe Engine
             poseTracker = new Pose({
                 locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
             });
@@ -132,33 +130,36 @@
 
         function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
 
-        // Precision MediaPipe tracker replacing raw frame differencing
         function onPoseResults(results) {
             motionPoints = [];
             playerSilhouette = [];
             if (!results.poseLandmarks) return;
 
-            // Strict target joints: 25 & 26 (Knees), 31 & 32 (Feet/Toes)
-            const legJoints = [25, 26, 31, 32];
             let waistY = canvas.height * settings.waistHeight;
+
+            // Expanded Joint List: 25/26 (Knees), 27/28 (Ankles), 29/30 (Heels), 31/32 (Toes)
+            const legJoints = [25, 26, 27, 28, 29, 30, 31, 32];
 
             legJoints.forEach(index => {
                 let landmark = results.poseLandmarks[index];
-                if (landmark && landmark.visibility > 0.5) {
-                    let x = (1.0 - landmark.x) * canvas.width;
-                    let y = landmark.y * canvas.height;
+                if (landmark) {
+                    // Feet indicators (indices >= 27) get a lower confidence cutoff (0.25) to account for blur/floor cutoff
+                    let requiredConfidence = index >= 27 ? 0.25 : 0.45;
                     
-                    // Maintain original logic: Only process points inside the Active Kick Zone Below Waistline
-                    if (y > waistY) {
-                        motionPoints.push({ x, y });
+                    if (landmark.visibility > requiredConfidence) {
+                        let x = (1.0 - landmark.x) * canvas.width;
+                        let y = landmark.y * canvas.height;
+                        
+                        if (y > waistY) {
+                            motionPoints.push({ x, y });
+                        }
                     }
                 }
             });
 
-            // Replicated original custom background decoration rendering loop
             if (results.poseLandmarks) {
                 results.poseLandmarks.forEach(landmark => {
-                    if(landmark.visibility > 0.5) {
+                    if(landmark.visibility > 0.4) {
                         playerSilhouette.push({
                             x: (1.0 - landmark.x) * canvas.width,
                             y: landmark.y * canvas.height
@@ -167,22 +168,22 @@
                 });
             }
 
-            // Check collisions using targeted leg joint points
+            // Collision check against ALL active lower body points
             if (motionPoints.length > 0 && soccerBall && soccerBall.kickCooldown <= 0) {
-                // Find the highest active joint tracking coordinate matching original design framework
-                let activeKickPoint = motionPoints.reduce((prev, curr) => (curr.y < prev.y ? curr : prev));
-
-                let dx = soccerBall.x - activeKickPoint.x;
-                let dy = soccerBall.y - activeKickPoint.y;
-                
-                if (Math.sqrt(dx * dx + dy * dy) < soccerBall.radius + settings.indicatorSize) {
-                    soccerBall.vy = -settings.kickPower;
-                    // Restored original trajectory system logic 
-                    soccerBall.vx = -dx * 0.1; 
-                    score++;
-                    if (score > highScore) highScore = score;
-                    playSound('kick');
-                    soccerBall.kickCooldown = 10; 
+                for (let i = 0; i < motionPoints.length; i++) {
+                    let pt = motionPoints[i];
+                    let dx = soccerBall.x - pt.x;
+                    let dy = soccerBall.y - pt.y;
+                    
+                    if (Math.sqrt(dx * dx + dy * dy) < soccerBall.radius + settings.indicatorSize) {
+                        soccerBall.vy = -settings.kickPower;
+                        soccerBall.vx = -dx * 0.1; 
+                        score++;
+                        if (score > highScore) highScore = score;
+                        playSound('kick');
+                        soccerBall.kickCooldown = 10; 
+                        break; // Exit loop on first collision contact
+                    }
                 }
             }
         }
@@ -244,7 +245,6 @@
             let floorY = canvas.height * settings.floorLevel;
             let difficultyMultiplier = score < 10 ? 1.0 : (score < 25 ? 1.2 : 1.4);
             soccerBall.vy += settings.gravity * difficultyMultiplier * settings.gameSpeed;
-            // Restored the center pull physics logic 
             let distanceToCenter = (canvas.width / 2) - soccerBall.x;
             soccerBall.vx += distanceToCenter * settings.funnelStrength * 0.01 * settings.gameSpeed;
             soccerBall.x += soccerBall.vx * settings.gameSpeed;
@@ -290,6 +290,7 @@
             ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width - 40, 48);
         }
 
+        // Standard Audio System 
         function playSound(type) {
             if (!audioCtx || !settings.soundEnabled) return;
             let o = audioCtx.createOscillator(), g = audioCtx.createGain();
