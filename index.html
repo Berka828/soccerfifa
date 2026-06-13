@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>World Cup Keep-Up Challenge</title>
+    <title>Keep-Up Challenge - Knee & Foot Tracking</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
         canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
@@ -12,64 +12,91 @@
         button:hover { background-color: #45a049; transform: scale(1.05); }
         #error-msg { color: #ff4444; font-size: 1.2em; max-width: 600px; margin-top: 20px; display: none; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px; border: 1px solid #ff4444; }
         .dg.ac { z-index: 50 !important; }
+        #loading-status { margin-top: 15px; color: #aaa; font-style: italic; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.7.9/dat.gui.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 </head>
 <body>
     <div id="ui">
         <h1 style="letter-spacing: 2px; font-size: 3em; font-weight: bold; margin-bottom: 10px;">KEEP-UP CHALLENGE</h1>
-        <p style="color: #ddd; font-size: 1.2em; margin-bottom: 40px;">Use only your legs and feet to keep the ball in the air!</p>
+        <p style="color: #ddd; font-size: 1.2em; margin-bottom: 40px;">Use only your knees and feet to keep the ball in the air!</p>
         <button id="startBtn" onclick="startApp()">START GAME</button>
+        <div id="loading-status"></div>
         <div id="error-msg"></div>
     </div>
     <canvas id="gameCanvas"></canvas>
     <video id="webcam" playsinline autoplay muted></video>
+
     <script>
         const video = document.getElementById('webcam');
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const errorMsg = document.getElementById('error-msg');
         const startBtn = document.getElementById('startBtn');
+        const loadingStatus = document.getElementById('loading-status');
 
-        let soccerBall = null, motionPoints = [], playerSilhouette = [], lastFrame = null;
+        let soccerBall = null, trackingPoints = [], activeJoints = [];
         let engineBooted = false, score = 0, highScore = 0;
+        let poseTracker = null, cameraUtils = null;
         
         let bgImage = new Image();
         let bgLoaded = false;
-        bgImage.src = 'ChatGPT Image May 16, 2026, 04_06_46 AM.png';
+        bgImage.src = 'BxCMFifa bg.png'; // Updated to use the updated layout asset background
         bgImage.onload = () => { bgLoaded = true; };
 
         const defaultSettings = {
             gameSpeed: 1.0, kickPower: 16, ballSize: 60, gravity: 0.4, 
-            floorLevel: 0.9, soundEnabled: true, cameraAlpha: 0.3, cameraBlur: 3, 
-            indicatorColor: '#00FFFF', indicatorSize: 40, funnelStrength: 0.05,
-            waistHeight: 0.5 // Mid-screen is the default waistline
+            floorLevel: 0.9, soundEnabled: true, cameraAlpha: 0.3, cameraBlur: 0, 
+            indicatorColor: '#00FFFF', indicatorSize: 35, detectionConfidence: 0.5
         };
         let settings = JSON.parse(localStorage.getItem('soccerGameSettings')) || { ...defaultSettings };
         let audioCtx;
 
-        function showError(msg) { errorMsg.innerHTML = msg; errorMsg.style.display = 'block'; startBtn.innerText = "TRY AGAIN"; }
+        function showError(msg) { errorMsg.innerHTML = msg; errorMsg.style.display = 'block'; startBtn.innerText = "TRY AGAIN"; loadingStatus.innerText = "";}
         function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
 
         function startApp() {
             errorMsg.style.display = 'none';
-            startBtn.innerText = "CONNECTING CAMERA...";
+            startBtn.style.display = 'none';
+            loadingStatus.innerText = "Initializing AI Pose Tracking (this may take a few seconds)...";
             initAudio();
             
+            // Setup MediaPipe Pose
+            poseTracker = new Pose({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+            });
+
+            poseTracker.setOptions({
+                modelComplexity: 1,
+                smoothLandmarks: true,
+                minDetectionConfidence: settings.detectionConfidence,
+                minTrackingConfidence: settings.detectionConfidence
+            });
+
+            poseTracker.onResults(onPoseResults);
+
+            // Access Webcam and initialize MediaPipe Camera Toolkit
             navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
             .then(stream => {
                 video.srcObject = stream;
-                video.onloadedmetadata = () => {
-                    video.play().then(() => {
-                        if (!engineBooted) {
-                            engineBooted = true;
-                            document.getElementById('ui').style.display = 'none';
-                            setupGUI();
-                            startExperience();
-                        }
-                    }).catch(err => showError("Video playback failed."));
-                };
-            }).catch(err => showError("Camera Error: " + err.message));
+                cameraUtils = new Camera(video, {
+                    onFrame: async () => {
+                        await poseTracker.send({ image: video });
+                    },
+                    width: 640,
+                    height: 480
+                });
+                cameraUtils.start().then(() => {
+                    if (!engineBooted) {
+                        engineBooted = true;
+                        document.getElementById('ui').style.display = 'none';
+                        setupGUI();
+                        startExperience();
+                    }
+                }).catch(err => showError("Camera runtime pipeline failure."));
+            }).catch(err => showError("Camera Access Error: " + err.message));
         }
 
         function setupGUI() {
@@ -79,16 +106,17 @@
             gameFolder.add(settings, 'kickPower', 10, 25).name('Kick Power');
             gameFolder.add(settings, 'ballSize', 30, 100).name('Ball Size').onChange(v => { if(soccerBall) soccerBall.radius = v; });
             gameFolder.add(settings, 'floorLevel', 0.5, 1.0).name('Floor Level');
-            gameFolder.add(settings, 'funnelStrength', 0.0, 0.2).name('Center Funnel');
             gameFolder.add(settings, 'soundEnabled').name('Sound ON/OFF');
             gameFolder.open();
 
-            const playerFolder = gui.addFolder('Player Sensors');
+            const playerFolder = gui.addFolder('AI Sensor Settings');
             playerFolder.add(settings, 'cameraAlpha', 0.0, 1.0).name('Player Visibility');
             playerFolder.add(settings, 'cameraBlur', 0, 10).name('Player Blur');
-            playerFolder.add(settings, 'waistHeight', 0.1, 0.9).name('Waistline Level');
-            playerFolder.addColor(settings, 'indicatorColor').name('Sensor Color');
-            playerFolder.add(settings, 'indicatorSize', 10, 80).name('Sensor Size');
+            playerFolder.addColor(settings, 'indicatorColor').name('Joint Sensor Color');
+            playerFolder.add(settings, 'indicatorSize', 15, 60).name('Sensor Size');
+            playerFolder.add(settings, 'detectionConfidence', 0.3, 0.9).name('AI Sensitivity').onChange(v => {
+                if(poseTracker) poseTracker.setOptions({ minDetectionConfidence: v, minTrackingConfidence: v });
+            });
             playerFolder.open();
             
             const saveFolder = gui.addFolder('Save & Reset');
@@ -100,90 +128,132 @@
             resizeCanvas();
             window.addEventListener('resize', resizeCanvas);
             soccerBall = { x: canvas.width/2, y: canvas.height/4, vx: 0, vy: 0, radius: settings.ballSize, rotation: 0, kickCooldown: 0 };
-            trackMotion();
             gameLoop();
         }
 
         function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
 
+        // Core MediaPipe callback executing frame calculations
+        function onPoseResults(results) {
+            trackingPoints = [];
+            if (!results.poseLandmarks) return;
+
+            // Target Key Indices from MediaPipe Pose Model Architecture:
+            // 25: Left Knee, 26: Right Knee, 27: Left Ankle, 28: Right Ankle, 31: Left Foot Index, 32: Right Foot Index
+            const targetJoints = [25, 26, 27, 28, 31, 32];
+
+            targetJoints.forEach(index => {
+                let landmark = results.poseLandmarks[index];
+                // Only use points with a strong tracking confidence score
+                if (landmark && landmark.visibility > 0.5) {
+                    // Mirroring the coordinate system path so it mirrors natural human physical movement
+                    let x = (1.0 - landmark.x) * canvas.width;
+                    let y = landmark.y * canvas.height;
+                    trackingPoints.push({ x, y });
+                }
+            });
+
+            // Handle real-time physical interactions with the tracked joints
+            if (soccerBall && soccerBall.kickCooldown <= 0) {
+                for (let i = 0; i < trackingPoints.length; i++) {
+                    let joint = trackingPoints[i];
+                    let dx = soccerBall.x - joint.x;
+                    let dy = soccerBall.y - joint.y;
+                    let distance = Math.sqrt(dx * dx + dy * dy);
+
+                    // Core Collision threshold check (Ball boundary meeting Joint boundary)
+                    if (distance < soccerBall.radius + settings.indicatorSize) {
+                        soccerBall.vy = -settings.kickPower;
+                        soccerBall.vx = dx * 0.15; // Drives contextual vector tracking based on where contact hit
+                        score++;
+                        if (score > highScore) highScore = score;
+                        playSound('kick');
+                        soccerBall.kickCooldown = 8; // Cooldown frames to prevent bounce loop artifacts
+                        break;
+                    }
+                }
+            }
+        }
+
         function gameLoop() {
             requestAnimationFrame(gameLoop);
             if (bgLoaded) { ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height); } 
             else { ctx.fillStyle = '#114411'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+            
             drawMirroredCamera();
-            drawKickZone();
-            drawPlayerForm();
+            drawJointSensors();
             updateAndDrawBall();
             drawUI();
-        }
-
-        function drawKickZone() {
-            let waistY = canvas.height * settings.waistHeight;
-            ctx.save();
-            ctx.beginPath(); ctx.moveTo(0, waistY); ctx.lineTo(canvas.width, waistY);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)'; ctx.lineWidth = 2;
-            ctx.setLineDash([10, 10]); ctx.stroke();
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; ctx.font = '14px Arial';
-            ctx.textAlign = 'right';
-            ctx.fillText("Active Kick Zone Below", canvas.width - 20, waistY - 10);
-            ctx.restore();
         }
 
         function drawMirroredCamera() {
             ctx.save();
             ctx.globalAlpha = settings.cameraAlpha;
-            ctx.filter = `blur(${settings.cameraBlur}px) contrast(1.2)`;
+            if (settings.cameraBlur > 0) ctx.filter = `blur(${settings.cameraBlur}px) contrast(1.2)`;
             ctx.translate(canvas.width, 0); ctx.scale(-1, 1);
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             ctx.restore();
         }
 
-        function drawPlayerForm() {
-            ctx.save();
-            ctx.fillStyle = settings.indicatorColor;
-            for (let i = 0; i < playerSilhouette.length; i++) {
-                if (Math.random() > 0.4) {
-                    ctx.globalAlpha = Math.random() * 0.5;
-                    ctx.fillRect(playerSilhouette[i].x - 4, playerSilhouette[i].y - 4, 8, 8);
-                }
-            }
-            ctx.restore();
-            for (let i = 0; i < motionPoints.length; i++) {
-                let p = motionPoints[i];
+        function drawJointSensors() {
+            for (let i = 0; i < trackingPoints.length; i++) {
+                let p = trackingPoints[i];
                 let grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, settings.indicatorSize);
-                grad.addColorStop(0, '#FFFFFF'); grad.addColorStop(1, settings.indicatorColor + '00');
+                grad.addColorStop(0, '#FFFFFF'); 
+                grad.addColorStop(0.3, settings.indicatorColor); 
+                grad.addColorStop(1, 'transparent');
+                
+                ctx.save();
                 ctx.fillStyle = grad;
-                ctx.beginPath(); ctx.arc(p.x, p.y, settings.indicatorSize, 0, 2 * Math.PI); ctx.fill();
+                ctx.beginPath(); 
+                ctx.arc(p.x, p.y, settings.indicatorSize, 0, 2 * Math.PI); 
+                ctx.fill();
+                ctx.restore();
             }
         }
 
         function updateAndDrawBall() {
             if (!soccerBall) return;
             if (soccerBall.kickCooldown > 0) soccerBall.kickCooldown--;
+            
             let floorY = canvas.height * settings.floorLevel;
-            let difficultyMultiplier = score < 10 ? 1.0 : (score < 25 ? 1.2 : 1.4);
+            let difficultyMultiplier = score < 10 ? 1.0 : (score < 25 ? 1.15 : 1.3);
+            
             soccerBall.vy += settings.gravity * difficultyMultiplier * settings.gameSpeed;
-            let distanceToCenter = (canvas.width / 2) - soccerBall.x;
-            soccerBall.vx += distanceToCenter * settings.funnelStrength * 0.01 * settings.gameSpeed;
             soccerBall.x += soccerBall.vx * settings.gameSpeed;
             soccerBall.y += soccerBall.vy * settings.gameSpeed;
-            soccerBall.vx *= 0.98; soccerBall.vy *= 0.99;
+            
+            soccerBall.vx *= 0.98; 
+            soccerBall.vy *= 0.99;
             soccerBall.rotation += soccerBall.vx * 0.02 * settings.gameSpeed;
+            
+            // Wall Collisions
             if (soccerBall.x - soccerBall.radius < 0 || soccerBall.x + soccerBall.radius > canvas.width) {
                 soccerBall.vx *= -0.8;
                 soccerBall.x = Math.max(soccerBall.radius, Math.min(canvas.width - soccerBall.radius, soccerBall.x));
                 playSound('bounce');
             }
+            
+            // Floor Collision (Reset Score)
             if (soccerBall.y + soccerBall.radius > floorY) {
                 soccerBall.y = floorY - soccerBall.radius;
-                soccerBall.vy *= -0.6;
+                soccerBall.vy *= -0.5;
                 if (score > 0) playSound('whistle');
                 score = 0;
             }
-            ctx.save(); ctx.translate(soccerBall.x, soccerBall.y); ctx.rotate(soccerBall.rotation);
+            
+            // Render Soccer Ball Graphic
+            ctx.save(); 
+            ctx.translate(soccerBall.x, soccerBall.y); 
+            ctx.rotate(soccerBall.rotation);
             ctx.fillStyle = 'white';
-            ctx.beginPath(); ctx.arc(0, 0, soccerBall.radius, 0, 2 * Math.PI); ctx.fill();
-            ctx.strokeStyle = '#333'; ctx.lineWidth = 2; ctx.stroke();
+            ctx.beginPath(); 
+            ctx.arc(0, 0, soccerBall.radius, 0, 2 * Math.PI); 
+            ctx.fill();
+            ctx.strokeStyle = '#333'; 
+            ctx.lineWidth = 2; 
+            ctx.stroke();
+            
             const colors = ['#E41E26', '#1E90FF', '#FFD700'];
             for (let i = 0; i < 3; i++) {
                 ctx.fillStyle = colors[i];
@@ -231,60 +301,6 @@
             }
         }
 
-        function trackMotion() {
-            const mC = document.createElement('canvas');
-            const mCtx = mC.getContext('2d', { willReadFrequently: true });
-            mC.width = 64; mC.height = 48;
-            
-            function scan() {
-                if (!engineBooted) { setTimeout(scan, 100); return; }
-                mCtx.drawImage(video, 0, 0, 64, 48);
-                let cur = mCtx.getImageData(0, 0, 64, 48).data;
-                motionPoints = [];
-                playerSilhouette = [];
-                if (lastFrame) {
-                    let rawMotion = [];
-                    for (let i = 0; i < cur.length; i += 4) {
-                        if (Math.abs(cur[i] - lastFrame[i]) > 40) {
-                            let px = (i / 4) % 64;
-                            let py = Math.floor((i / 4) / 64);
-                            let x = (1.0 - (px / 64)) * canvas.width;
-                            let y = (py / 48) * canvas.height;
-                            rawMotion.push({ x, y });
-                        }
-                    }
-                    playerSilhouette = rawMotion;
-
-                    // This is the definitive waist-down check.
-                    let waistY = canvas.height * settings.waistHeight;
-                    let kickZoneMotions = rawMotion.filter(p => p.y > waistY);
-                    
-                    if (kickZoneMotions.length > 0) {
-                        // Find the highest point WITHIN the kick zone (the top of a kicking foot)
-                        let activeKickPoint = kickZoneMotions.reduce((prev, curr) => (curr.y < prev.y ? curr : prev));
-                        motionPoints = [activeKickPoint]; // For visual feedback
-
-                        // Now, and only now, check for collision
-                        if (soccerBall && soccerBall.kickCooldown <= 0) {
-                            let dx = soccerBall.x - activeKickPoint.x;
-                            let dy = soccerBall.y - activeKickPoint.y;
-                            
-                            if (Math.sqrt(dx * dx + dy * dy) < soccerBall.radius + settings.indicatorSize) {
-                                soccerBall.vy = -settings.kickPower;
-                                soccerBall.vx = -dx * 0.1;
-                                score++;
-                                if (score > highScore) highScore = score;
-                                playSound('kick');
-                                soccerBall.kickCooldown = 10; // 10-frame delay to prevent double hits
-                            }
-                        }
-                    }
-                }
-                lastFrame = new Uint8ClampedArray(cur);
-                setTimeout(scan, 50);
-            }
-            scan();
-        }
         document.addEventListener('keydown', e => { if (e.key.toLowerCase() === 'f') { if (!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); }});
     </script>
 </body>
